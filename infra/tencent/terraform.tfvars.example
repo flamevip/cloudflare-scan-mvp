@@ -1,0 +1,11 @@
+region = "ap-shanghai"
+
+availability_zones = {
+  staging = "ap-shanghai-2"
+  pilot   = "ap-shanghai-3"
+}
+
+cam_user_names = {
+  staging = "scan-staging-worker"
+  pilot   = "scan-pilot-worker"
+}

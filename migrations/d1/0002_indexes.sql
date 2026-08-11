@@ -1,0 +1,12 @@
+CREATE INDEX IF NOT EXISTS idx_tasks_status_created_at ON tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_created_at ON tasks(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_shards_task_id ON task_shards(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_shard_id ON agent_runs(shard_id);
+CREATE INDEX IF NOT EXISTS idx_assets_task_id ON assets(task_id);
+CREATE INDEX IF NOT EXISTS idx_assets_host ON assets(host);
+CREATE INDEX IF NOT EXISTS idx_findings_task_id ON findings(task_id);
+CREATE INDEX IF NOT EXISTS idx_findings_asset_id ON findings(asset_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task_id ON artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_agent_run_id ON artifacts(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);

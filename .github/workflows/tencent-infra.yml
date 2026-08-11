@@ -1,0 +1,40 @@
+name: tencent-infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: tencent-infrastructure
+    env:
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+      TF_VAR_region: ${{ vars.TENCENT_REGION }}
+      TF_VAR_availability_zones: ${{ vars.TENCENT_AVAILABILITY_ZONES_JSON }}
+      TF_VAR_cam_user_names: ${{ vars.TENCENT_CAM_USER_NAMES_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive infra/tencent
+      - name: Initialize encrypted COS state
+        run: >-
+          terraform -chdir=infra/tencent init
+          -backend-config="region=${{ vars.TFSTATE_REGION }}"
+          -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+          -backend-config="prefix=cloudflare-scan-mvp/tencent/p1.tfstate"
+          -backend-config="encrypt=true"
+      - run: terraform -chdir=infra/tencent validate
+      - run: terraform -chdir=infra/tencent plan -out=tfplan
+      - if: inputs.action == 'apply'
+        run: terraform -chdir=infra/tencent apply -auto-approve tfplan

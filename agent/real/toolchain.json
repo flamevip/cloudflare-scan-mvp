@@ -1,0 +1,26 @@
+{
+  "base_images": {
+    "tools": "golang:1.24-alpine",
+    "runtime": "node:24-alpine"
+  },
+  "projectdiscovery": {
+    "subfinder": {
+      "module": "github.com/projectdiscovery/subfinder/v2/cmd/subfinder",
+      "version": "v2.7.1"
+    },
+    "httpx": {
+      "module": "github.com/projectdiscovery/httpx/cmd/httpx",
+      "version": "v1.6.10"
+    },
+    "nuclei": {
+      "module": "github.com/projectdiscovery/nuclei/v3/cmd/nuclei",
+      "version": "v3.3.8"
+    }
+  },
+  "nuclei_templates": {
+    "repository": "https://github.com/projectdiscovery/nuclei-templates.git",
+    "commit": "0f569c3724b966c2ba357c1d26a0aa6c041a6af5",
+    "tag": "v10.2.7",
+    "allow_user_templates": false
+  }
+}

@@ -1,0 +1,4 @@
+region  = "ap-shanghai"
+bucket  = "replace-with-encrypted-versioned-tfstate-bucket"
+prefix  = "cloudflare-scan-mvp/tencent/p1.tfstate"
+encrypt = true

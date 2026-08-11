@@ -1,0 +1,75 @@
+# scan-agent
+
+Local/container agent for the scan MVP. It uses the same callback token contract as the Worker external providers.
+
+Required environment variables:
+
+```text
+TASK_ID
+SHARD_ID
+AGENT_RUN_ID
+CALLBACK_BASE_URL
+CALLBACK_TOKEN
+```
+
+Optional:
+
+```text
+SCAN_MODE=mock|http_probe|real_toolchain  # default: mock
+CONFIG_URL=/api/agent/config
+TARGETS_URL=/api/agent/targets
+CANDIDATES_URL=/api/agent/candidates
+MODULES_JSON=["subdomain","http_probe","nuclei"]
+RATE_LIMIT=50
+TIMEOUT_MINUTES=30
+HTTP_TIMEOUT_MS=5000
+NUCLEI_TEMPLATES=/usr/local/share/nuclei-templates  # fixed; custom paths are rejected
+```
+
+Modes:
+
+- `mock`: no network scan; builds deterministic mock assets/findings from authorized root targets and optional candidates.
+- `http_probe`: bounded Node `fetch()` probe for authorized targets/candidates only.
+- `real_toolchain`: requires `subfinder`, `httpx`, and/or `nuclei` based on `MODULES_JSON`; fails clearly if a required binary is missing.
+
+Safety defaults for `real_toolchain`:
+
+- Candidate merge revalidates every candidate host against authorized root domains from `/api/agent/targets`.
+- `nuclei` uses severities `info,low,medium,high,critical` and excludes tags `dos,bruteforce,brute-force,fuzz,fuzzing,intrusive,destructive`.
+- Rate and process timeout come from Worker-injected `RATE_LIMIT` and `TIMEOUT_MINUTES`.
+
+Flow:
+
+1. `GET /api/agent/config`
+2. `GET /api/agent/targets`
+3. `GET /api/agent/candidates` (empty when Hunter did not produce candidates)
+4. `POST /api/agent/heartbeat`
+5. Run selected mode and parse httpx/nuclei JSONL when applicable
+6. `POST /api/agent/ingest`
+7. `POST /api/agent/complete` or `POST /api/agent/fail`
+
+Run locally in safe mock mode:
+
+```bash
+TASK_ID=... \
+SHARD_ID=... \
+AGENT_RUN_ID=... \
+CALLBACK_BASE_URL=http://localhost:8787 \
+CALLBACK_TOKEN=... \
+SCAN_MODE=mock \
+node src/scan-agent.js
+```
+
+Parser fixture verification (no network or cloud credentials):
+
+```bash
+node ../../scripts/verify-agent-fixtures.mjs
+```
+
+Build container locally:
+
+```bash
+docker build -t scan-agent:v0.1.0 .
+```
+
+The Dockerfile installs ProjectDiscovery `subfinder`, `httpx`, and `nuclei` from upstream Go modules into the image. It embeds no secrets and no target-specific data. Cloud Run Jobs should normally run this image with `SCAN_MODE=mock` first, then explicitly opt into `http_probe` or `real_toolchain` only for authorized targets.

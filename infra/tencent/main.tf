@@ -1,0 +1,148 @@
+locals {
+  environments = toset(["staging", "pilot"])
+}
+
+resource "tencentcloud_vpc" "scan" {
+  for_each   = local.environments
+  name       = "scan-${each.key}"
+  cidr_block = var.vpc_cidrs[each.key]
+  tags       = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_subnet" "scan" {
+  for_each          = local.environments
+  name              = "scan-${each.key}-private"
+  vpc_id            = tencentcloud_vpc.scan[each.key].id
+  cidr_block        = var.subnet_cidrs[each.key]
+  availability_zone = var.availability_zones[each.key]
+  is_multicast      = false
+  tags              = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_security_group" "scan" {
+  for_each    = local.environments
+  name        = "scan-${each.key}-eksci"
+  description = "No inbound traffic; public egress with private and metadata ranges denied."
+  project_id  = 0
+  tags        = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_security_group_rule_set" "scan" {
+  for_each          = local.environments
+  security_group_id = tencentcloud_security_group.scan[each.key].id
+
+  ingress {
+    action      = "DROP"
+    cidr_block  = "0.0.0.0/0"
+    protocol    = "ALL"
+    port        = "ALL"
+    description = "Deny all inbound traffic"
+  }
+
+  # Rule-set blocks are ordered. Private, loopback, CGNAT, link-local and
+  # metadata destinations must be evaluated before the public allow rule.
+  dynamic "egress" {
+    for_each = ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]
+    content {
+      action      = "DROP"
+      cidr_block  = egress.value
+      protocol    = "ALL"
+      port        = "ALL"
+      description = "Deny private, loopback, CGNAT, link-local, and metadata egress"
+    }
+  }
+
+  egress {
+    action      = "ACCEPT"
+    cidr_block  = "0.0.0.0/0"
+    protocol    = "ALL"
+    port        = "ALL"
+    description = "Allow public DNS, registry, callback, and authorized targets"
+  }
+}
+
+resource "tencentcloud_eip" "nat" {
+  for_each                   = local.environments
+  name                       = "scan-${each.key}-nat"
+  internet_charge_type       = "TRAFFIC_POSTPAID_BY_HOUR"
+  internet_max_bandwidth_out = 20
+  tags                       = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_nat_gateway" "scan" {
+  for_each            = local.environments
+  name                = "scan-${each.key}-nat"
+  vpc_id              = tencentcloud_vpc.scan[each.key].id
+  nat_product_version = 1
+  bandwidth           = 20
+  max_concurrent      = 1000000
+  assigned_eip_set    = [tencentcloud_eip.nat[each.key].public_ip]
+  tags                = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_route_table" "scan" {
+  for_each = local.environments
+  vpc_id   = tencentcloud_vpc.scan[each.key].id
+  name     = "scan-${each.key}-private"
+  tags     = merge(var.tags, { environment = each.key })
+}
+
+resource "tencentcloud_route_table_entry" "default_nat" {
+  for_each               = local.environments
+  route_table_id         = tencentcloud_route_table.scan[each.key].id
+  destination_cidr_block = "0.0.0.0/0"
+  next_type              = "NAT"
+  next_hub               = tencentcloud_nat_gateway.scan[each.key].id
+  description            = "Controlled NAT egress"
+}
+
+resource "tencentcloud_route_table_association" "scan" {
+  for_each       = local.environments
+  route_table_id = tencentcloud_route_table.scan[each.key].id
+  subnet_id      = tencentcloud_subnet.scan[each.key].id
+}
+
+resource "tencentcloud_tcr_instance" "scan" {
+  name                  = var.tcr_instance_name
+  instance_type         = "basic"
+  open_public_operation = true
+  tags                  = var.tags
+}
+
+resource "tencentcloud_tcr_namespace" "scan" {
+  instance_id = tencentcloud_tcr_instance.scan.id
+  name        = var.tcr_namespace
+  is_public   = false
+}
+
+resource "tencentcloud_tcr_repository" "scan" {
+  instance_id    = tencentcloud_tcr_instance.scan.id
+  namespace_name = tencentcloud_tcr_namespace.scan.name
+  name           = var.tcr_repository
+  brief_desc     = "Digest-pinned Cloudflare scan agent"
+  description    = "Built by protected CI; tags are not accepted by pilot Worker configuration."
+}
+
+resource "tencentcloud_cam_policy" "eks_ci_runner" {
+  for_each    = local.environments
+  name        = "scan-${each.key}-eks-ci-runner"
+  description = "Minimum Tencent EKS CI lifecycle operations for the scan Worker."
+  document = jsonencode({
+    version = "2.0"
+    statement = [{
+      effect = "allow"
+      action = [
+        "tke:CreateEKSContainerInstances",
+        "tke:DescribeEKSContainerInstances",
+        "tke:DeleteEKSContainerInstances"
+      ]
+      resource = ["*"]
+    }]
+  })
+}
+
+resource "tencentcloud_cam_user_policy_attachment" "eks_ci_runner" {
+  for_each  = local.environments
+  user_name = var.cam_user_names[each.key]
+  policy_id = tencentcloud_cam_policy.eks_ci_runner[each.key].id
+}

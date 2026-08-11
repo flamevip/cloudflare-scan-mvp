@@ -1,0 +1,105 @@
+name = "cloudflare-scan-mvp-api"
+main = "worker/src/index.ts"
+compatibility_date = "2026-06-03"
+
+[vars]
+ENV = "dev"
+DEFAULT_PROJECT_ID = "project-default"
+DEV_ADMIN_TOKEN = "dev-token"
+TOKEN_SCOPE_ENFORCEMENT = "report"
+# Backward-compatible local switch. "inline" auto-completes mock tasks inside the Worker; "manual" waits for an external agent.
+MOCK_AGENT_MODE = "inline"
+# Preferred provider switch: "mock", "manual", "gcp_cloud_run", "aliyun_eci", or "auto".
+AGENT_PROVIDER = "mock"
+CALLBACK_BASE_URL = "http://localhost:8787"
+AGENT_SCAN_MODE = "mock"
+# Hunter external source is disabled by default. Put HUNTER_API_KEY in Wrangler secrets before enabling.
+HUNTER_ENABLED = "false"
+HUNTER_BASE_URL = "https://hunter.qianxin.com/openApi/search"
+HUNTER_PAGE_SIZE = "20"
+HUNTER_MAX_PAGES = "1"
+HUNTER_MAX_RESULTS = "100"
+HUNTER_TIMEOUT_MS = "5000"
+HUNTER_QUERY_TEMPLATE = "domain=\"{domain}\""
+# AI Search is optional and disabled locally by default. To enable, configure a Cloudflare AI Search binding named AI_SEARCH and set AI_SEARCH_ENABLED=true.
+AI_SEARCH_ENABLED = "false"
+AI_SEARCH_LIMIT = "10"
+# AI Search instance indexes R2 search docs under tenants/default/tasks/**/search/**/*.md.
+# Create with: wrangler ai-search create scan-artifacts-search --type r2 --source scan-artifacts-dev ...
+# Auto provider routing. "region" routes .cn targets to Aliyun and others to the default provider; "lowest_cost" picks the cheapest configured provider.
+AGENT_AUTO_ROUTING_POLICY = "region"
+AGENT_AUTO_ENABLE_FALLBACK = "true"
+AGENT_AUTO_CN_PROVIDER = "aliyun_eci"
+AGENT_AUTO_DEFAULT_PROVIDER = "gcp_cloud_run"
+TASK_MAX_RETRY = "1"
+AGENT_HEARTBEAT_TIMEOUT_SECONDS = "600"
+AGENT_HEARTBEAT_INTERVAL_SECONDS = "30"
+AGENT_MAX_CANDIDATES = "500"
+ARTIFACT_RETENTION_DAYS = "30"
+METADATA_RETENTION_DAYS = "180"
+AUDIT_RETENTION_DAYS = "180"
+AGENT_MAX_COST_USD = ""
+AGENT_ESTIMATED_DURATION_SECONDS = "600"
+AGENT_CPU = "1"
+AGENT_MEMORY_GIB = "0.5"
+GCP_CLOUD_RUN_VCPU_SECOND_PRICE = "0.000018"
+GCP_CLOUD_RUN_MEMORY_GIB_SECOND_PRICE = "0.000002"
+ALIYUN_ECI_VCPU_SECOND_PRICE = "0.0000077"
+ALIYUN_ECI_MEMORY_GIB_SECOND_PRICE = "0.00000096"
+# Cloud Run Jobs provider placeholders. Put secrets such as GCP_ACCESS_TOKEN/GCP_PRIVATE_KEY in Wrangler secrets, not this file.
+GCP_PROJECT_ID = ""
+GCP_LOCATION = ""
+CLOUD_RUN_JOB_NAME = ""
+CLOUD_RUN_CONTAINER_NAME = ""
+CLOUD_RUN_DRY_RUN = "true"
+# Aliyun ECI provider placeholders. Put ALIYUN_ACCESS_KEY_ID/ALIYUN_ACCESS_KEY_SECRET in Wrangler secrets, not this file.
+ALIYUN_REGION_ID = ""
+ALIYUN_ZONE_ID = ""
+ALIYUN_SECURITY_GROUP_ID = ""
+ALIYUN_VSWITCH_ID = ""
+ALIYUN_ECI_IMAGE = ""
+ALIYUN_ECI_CONTAINER_NAME = "scan-agent"
+ALIYUN_ECI_CPU = "1"
+ALIYUN_ECI_MEMORY = "2"
+ALIYUN_ECI_DRY_RUN = "true"
+# Tencent EKS Container Instances is explicit-only and application dry-run by default.
+# Put TENCENT_SECRET_ID, TENCENT_SECRET_KEY, and optional TCR credentials in Wrangler secrets.
+TENCENT_EKS_CI_REGION = ""
+TENCENT_EKS_CI_VPC_ID = ""
+TENCENT_EKS_CI_SUBNET_ID = ""
+TENCENT_EKS_CI_SECURITY_GROUP_IDS = ""
+TENCENT_EKS_CI_IMAGE = ""
+TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST = ""
+TENCENT_EKS_CI_CONTAINER_NAME = "scan-agent"
+TENCENT_EKS_CI_CPU = "1"
+TENCENT_EKS_CI_MEMORY = "2"
+TENCENT_EKS_CI_API_TIMEOUT_MS = "10000"
+TENCENT_EKS_CI_DRY_RUN = "true"
+TENCENT_EKS_CI_READONLY_PREFLIGHT_ENABLED = "false"
+TENCENT_TCR_SERVER = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "scan_mvp_metadata"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations/d1"
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "scan-artifacts-dev"
+
+[[queues.producers]]
+binding = "SCAN_DISPATCH"
+queue = "scan-dispatch-dev"
+
+[[queues.producers]]
+binding = "SCAN_DEADLETTER"
+queue = "scan-deadletter-dev"
+
+[[queues.consumers]]
+queue = "scan-dispatch-dev"
+max_batch_size = 1
+max_batch_timeout = 5
+
+[triggers]
+crons = ["*/10 * * * *", "0 3 * * *"]

@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloudflare Scan MVP</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 24px 32px; border-bottom: 1px solid #334155; background: #111827; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+    h1, h2, h3 { margin: 0 0 12px; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .card { border: 1px solid #334155; border-radius: 14px; background: #111827; padding: 18px; box-shadow: 0 10px 30px rgb(0 0 0 / 20%); }
+    label { display: grid; gap: 6px; margin: 10px 0; color: #cbd5e1; font-size: 14px; }
+    input, textarea, select { border: 1px solid #475569; border-radius: 10px; background: #020617; color: #e2e8f0; padding: 10px 12px; font: inherit; }
+    textarea { min-height: 88px; resize: vertical; }
+    button { border: 0; border-radius: 10px; background: #38bdf8; color: #082f49; font-weight: 700; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #334155; color: #e2e8f0; }
+    button:disabled { cursor: not-allowed; opacity: .6; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border-bottom: 1px solid #334155; padding: 9px 8px; text-align: left; vertical-align: top; }
+    th { color: #93c5fd; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    code, pre { background: #020617; border: 1px solid #334155; border-radius: 10px; }
+    code { padding: 2px 5px; }
+    pre { padding: 12px; overflow: auto; max-height: 280px; }
+    a { color: #7dd3fc; }
+    .muted { color: #94a3b8; }
+    .status { display: inline-flex; border-radius: 999px; padding: 2px 8px; font-size: 12px; background: #1e293b; }
+    .completed, .success { background: #064e3b; color: #a7f3d0; }
+    .failed { background: #7f1d1d; color: #fecaca; }
+    .running, .provisioning, .pending { background: #713f12; color: #fde68a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cloudflare Scan MVP</h1>
+    <p class="muted">Phase 1/2：创建任务、mock agent 闭环、资产/漏洞/artifact 展示。</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>连接设置</h2>
+      <div class="grid">
+        <label>API Base URL
+          <input id="apiBase" value="http://localhost:8787" />
+        </label>
+        <label>Admin Token
+          <input id="token" value="dev-token" />
+        </label>
+      </div>
+      <button id="healthBtn" class="secondary">检查 /health</button>
+      <span id="health" class="muted"></span>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>创建扫描任务</h2>
+        <label>任务名
+          <input id="taskName" value="example.com scan" />
+        </label>
+        <label>Targets（每行一个 root domain）
+          <textarea id="targets">example.com</textarea>
+        </label>
+        <label>Modules
+          <input id="modules" value="subdomain,http_probe,nuclei" />
+        </label>
+        <div class="grid">
+          <label>Rate limit
+            <input id="rateLimit" type="number" value="50" />
+          </label>
+          <label>Timeout minutes
+            <input id="timeoutMinutes" type="number" value="30" />
+          </label>
+        </div>
+        <button id="createBtn">创建任务</button>
+      </div>
+
+      <div class="card">
+        <h2>任务列表</h2>
+        <button id="refreshBtn" class="secondary">刷新任务</button>
+        <div id="tasks"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>任务详情</h2>
+      <div id="detail" class="muted">选择一个任务查看详情。</div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Assets</h2>
+        <div id="assets" class="muted">暂无</div>
+      </div>
+      <div class="card">
+        <h2>Findings</h2>
+        <div id="findings" class="muted">暂无</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Artifacts</h2>
+      <div id="artifacts" class="muted">暂无</div>
+    </section>
+
+    <section class="card">
+      <h2>AI Search</h2>
+      <p class="muted">搜索 agent 生成的 R2 search docs。AI Search/R2 索引可能有延迟；本地未配置 binding 时会显示 degraded 状态。</p>
+      <div class="grid">
+        <label>Query
+          <input id="searchQuery" value="login" maxlength="500" />
+        </label>
+        <label>Task ID（可选，默认当前选中任务）
+          <input id="searchTaskId" placeholder="task_..." />
+        </label>
+        <label>Type（可选）
+          <input id="searchType" placeholder="agent_real_toolchain_raw" />
+        </label>
+        <label>Limit
+          <input id="searchLimit" type="number" value="10" min="1" max="20" />
+        </label>
+      </div>
+      <button id="searchBtn">搜索</button>
+      <div id="searchStatus" class="muted">请输入 query 后搜索。</div>
+      <div id="searchResults" class="muted">暂无</div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>运维与 Provider</h2>
+        <button id="operationsBtn" class="secondary">运行摘要</button>
+        <button id="preflightBtn" class="secondary">腾讯预检</button>
+        <button id="searchStatusBtn" class="secondary">搜索状态</button>
+        <button id="retentionPreviewBtn" class="secondary">保留清理预览</button>
+        <pre id="operationsOutput"></pre>
+      </div>
+      <div class="card">
+        <h2>用户管理</h2>
+        <label>Email<input id="newUserEmail" type="email" placeholder="operator@example.com" /></label>
+        <label>Global role<select id="newUserRole"><option value="reader">reader</option><option value="admin">admin</option></select></label>
+        <button id="createUserBtn">创建用户</button>
+        <button id="refreshUsersBtn" class="secondary">刷新</button>
+        <div id="users" class="muted">暂无</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>API Token</h2>
+        <label>User ID<input id="tokenUserId" placeholder="user_..." /></label>
+        <label>Name<input id="tokenName" value="pilot operator" /></label>
+        <label>Scopes<input id="tokenScopes" value="tasks:read,tasks:write,artifacts:read,search:read" /></label>
+        <label>Expires at<input id="tokenExpiresAt" type="datetime-local" /></label>
+        <button id="createTokenBtn">创建 Token</button>
+        <button id="refreshTokensBtn" class="secondary">刷新</button>
+        <p class="muted">Token 明文只显示一次，不会写入浏览器存储。</p>
+        <pre id="tokenSecret"></pre>
+        <div id="tokens" class="muted">暂无</div>
+      </div>
+      <div class="card">
+        <h2>项目成员与保留策略</h2>
+        <label>Project ID<input id="adminProjectId" value="project-default" /></label>
+        <label>User ID<input id="memberUserId" placeholder="user_..." /></label>
+        <div class="grid">
+          <label>Role<select id="memberRole"><option>reader</option><option>operator</option><option>admin</option><option>owner</option></select></label>
+          <label>Status<select id="memberStatus"><option>active</option><option>disabled</option></select></label>
+        </div>
+        <button id="saveMemberBtn">保存成员</button>
+        <button id="refreshMembersBtn" class="secondary">刷新成员</button>
+        <div class="grid">
+          <label>Artifact days<input id="artifactRetention" type="number" value="30" min="1" max="30" /></label>
+          <label>Metadata days<input id="metadataRetention" type="number" value="180" min="30" max="180" /></label>
+          <label>Audit days<input id="auditRetention" type="number" value="180" min="30" max="180" /></label>
+        </div>
+        <button id="saveSettingsBtn" class="secondary">保存保留策略</button>
+        <div id="members" class="muted">暂无</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>审计日志</h2>
+      <button id="refreshAuditBtn" class="secondary">刷新审计</button>
+      <div id="auditLogs" class="muted">暂无</div>
+    </section>
+
+    <section class="card">
+      <h2>请求日志</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script>
+    const els = Object.fromEntries([...document.querySelectorAll('[id]')].map((el) => [el.id, el]));
+    let selectedTaskId = null;
+
+    els.healthBtn.onclick = async () => {
+      const res = await api('/health', { auth: false });
+      els.health.textContent = `${res.data.service} ${res.data.env} ${res.data.time}`;
+      if (res.data.env === 'pilot') {
+        els.rateLimit.value = '1';
+        els.timeoutMinutes.value = '15';
+      }
+    };
+
+    els.createBtn.onclick = async () => {
+      const payload = {
+        name: els.taskName.value.trim(),
+        targets: els.targets.value.split(/\n|,/).map((v) => v.trim()).filter(Boolean),
+        modules: els.modules.value.split(',').map((v) => v.trim()).filter(Boolean),
+        external_sources: [],
+        max_agents: 1,
+        rate_limit: Number(els.rateLimit.value),
+        timeout_minutes: Number(els.timeoutMinutes.value),
+      };
+      const res = await api('/api/tasks', { method: 'POST', body: payload });
+      selectedTaskId = res.data.task_id;
+      await refreshTasks();
+      await loadTask(selectedTaskId);
+    };
+
+    els.refreshBtn.onclick = refreshTasks;
+    els.searchBtn.onclick = searchArtifacts;
+    els.operationsBtn.onclick = loadOperations;
+    els.preflightBtn.onclick = runPreflight;
+    els.searchStatusBtn.onclick = loadSearchStatus;
+    els.retentionPreviewBtn.onclick = previewRetention;
+    els.createUserBtn.onclick = createUser;
+    els.refreshUsersBtn.onclick = refreshUsers;
+    els.createTokenBtn.onclick = createToken;
+    els.refreshTokensBtn.onclick = refreshTokens;
+    els.saveMemberBtn.onclick = saveMember;
+    els.refreshMembersBtn.onclick = refreshMembers;
+    els.saveSettingsBtn.onclick = saveSettings;
+    els.refreshAuditBtn.onclick = refreshAudit;
+
+    async function refreshTasks() {
+      const res = await api('/api/tasks');
+      const rows = res.data.items || [];
+      els.tasks.innerHTML = table(['name', 'status', 'assets', 'findings', 'created'], rows.map((row) => ({
+        name: `<a href="#" data-task="${row.id}">${escapeHtml(row.name)}</a>`,
+        status: badge(row.status),
+        assets: row.asset_count ?? 0,
+        findings: row.finding_count ?? 0,
+        created: row.created_at,
+      })));
+      els.tasks.querySelectorAll('[data-task]').forEach((a) => a.onclick = (event) => {
+        event.preventDefault();
+        selectedTaskId = a.dataset.task;
+        loadTask(selectedTaskId);
+      });
+    }
+
+    async function loadTask(taskId) {
+      const [detail, shards, runs, assets, findings, artifacts] = await Promise.all([
+        api(`/api/tasks/${taskId}`),
+        api(`/api/tasks/${taskId}/shards`),
+        api(`/api/tasks/${taskId}/agent-runs`),
+        api(`/api/assets?task_id=${encodeURIComponent(taskId)}`),
+        api(`/api/findings?task_id=${encodeURIComponent(taskId)}`),
+        api(`/api/artifacts?task_id=${encodeURIComponent(taskId)}`),
+      ]);
+      const d = detail.data;
+      els.detail.innerHTML = `
+        <h3>${escapeHtml(d.name)} ${badge(d.status)}</h3>
+        <p><code>${d.id}</code></p>
+        <p>targets: <code>${escapeHtml(d.targets_json)}</code></p>
+        <p>assets: ${d.asset_count} findings: ${d.finding_count} artifacts: ${d.artifact_count}</p>
+        ${['pending', 'provisioning', 'retrying', 'running'].includes(d.status) ? '<button id="cancelTaskBtn" class="secondary">取消任务</button>' : ''}
+        <h3>Shards</h3>${table(['id', 'status', 'module', 'started', 'finished'], shards.data.items.map((s) => ({ id: s.id, status: badge(s.status), module: s.module, started: s.started_at || '', finished: s.finished_at || '' })))}
+        <h3>Agent Runs</h3>${table(['id', 'provider', 'status', 'image', 'started', 'finished'], runs.data.items.map((r) => ({ id: r.id, provider: r.provider, status: badge(r.status), image: r.image || '', started: r.started_at || '', finished: r.finished_at || '' })))}
+      `;
+      const cancelButton = document.querySelector('#cancelTaskBtn');
+      if (cancelButton) cancelButton.onclick = () => cancelSelectedTask(taskId);
+      els.assets.innerHTML = table(['url', 'status', 'title', 'tech'], assets.data.items.map((a) => ({ url: escapeHtml(a.url || ''), status: a.status_code || '', title: escapeHtml(a.title || ''), tech: escapeHtml(a.technologies_json || '[]') })));
+      els.findings.innerHTML = table(['severity', 'title', 'template', 'matched_at'], findings.data.items.map((f) => ({ severity: badge(f.severity), title: escapeHtml(f.title), template: escapeHtml(f.template_id || ''), matched_at: escapeHtml(f.matched_at || '') })));
+      els.artifacts.innerHTML = table(['type', 'raw', 'search'], artifacts.data.items.map((a) => ({
+        type: escapeHtml(a.type),
+        raw: `<button class="secondary" data-artifact="${a.id}" data-kind="raw">download</button>`,
+        search: a.search_r2_key ? `<button class="secondary" data-artifact="${a.id}" data-kind="search">download</button>` : '',
+      })));
+      els.artifacts.querySelectorAll('[data-artifact]').forEach((button) => button.onclick = () => downloadArtifact(button.dataset.artifact, button.dataset.kind));
+    }
+
+    async function downloadArtifact(artifactId, kind) {
+      const response = await fetch(`${apiBase()}/api/artifacts/${artifactId}/download?type=${kind}`, {
+        headers: { Authorization: `Bearer ${els.token.value}` },
+      });
+      const blob = await response.blob();
+      if (!response.ok) throw new Error(await blob.text());
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${artifactId}-${kind}`;
+      a.click();
+      URL.revokeObjectURL(href);
+    }
+
+    async function searchArtifacts() {
+      const params = new URLSearchParams();
+      params.set('q', els.searchQuery.value.trim());
+      const taskId = els.searchTaskId.value.trim() || selectedTaskId || '';
+      if (taskId) params.set('task_id', taskId);
+      if (els.searchType.value.trim()) params.set('type', els.searchType.value.trim());
+      params.set('limit', String(Math.min(20, Math.max(1, Number(els.searchLimit.value) || 10))));
+      els.searchStatus.textContent = '搜索中...';
+      els.searchResults.innerHTML = '<p class="muted">Loading...</p>';
+      try {
+        const res = await api(`/api/search?${params.toString()}`);
+        if (res.data.degraded) {
+          els.searchStatus.textContent = `Degraded: ${res.data.error?.message || 'AI Search unavailable'}（索引或 binding 未就绪时为预期状态）`;
+        } else {
+          els.searchStatus.textContent = `完成：${(res.data.items || []).length} 条结果。若为空，可能仍在索引或没有匹配内容。`;
+        }
+        const items = res.data.items || [];
+        els.searchResults.innerHTML = items.length ? table(['task', 'artifact', 'type', 'score', 'snippet'], items.map((item) => ({
+          task: escapeHtml(item.task_id || ''),
+          artifact: escapeHtml(item.artifact_id || ''),
+          type: escapeHtml(item.type || ''),
+          score: item.score ?? '',
+          snippet: escapeHtml(item.snippet || ''),
+        }))) : '<p class="muted">无结果。AI Search 索引可能仍有延迟，或当前 token 无权访问匹配任务。</p>';
+      } catch (err) {
+        els.searchStatus.textContent = `Error: ${err.message}`;
+        els.searchResults.innerHTML = '<p class="failed status">search failed</p>';
+      }
+    }
+
+    async function cancelSelectedTask(taskId) {
+      if (!confirm(`确认取消任务 ${taskId}？`)) return;
+      await api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST', body: {} });
+      await refreshTasks();
+      await loadTask(taskId);
+    }
+
+    async function loadOperations() {
+      const res = await api('/api/admin/operations/summary');
+      els.operationsOutput.textContent = JSON.stringify(res.data, null, 2);
+    }
+
+    async function runPreflight() {
+      const target = els.targets.value.split(/\n|,/).map((value) => value.trim()).find(Boolean) || 'example.com';
+      const res = await api('/api/admin/providers/preflight', { method: 'POST', body: { provider: 'tencent_eks_ci', targets: [target], modules: ['subdomain', 'http_probe', 'nuclei'], cloud_check: false } });
+      els.operationsOutput.textContent = JSON.stringify(res.data, null, 2);
+    }
+
+    async function loadSearchStatus() {
+      const res = await api('/api/admin/search/status');
+      els.operationsOutput.textContent = JSON.stringify(res.data, null, 2);
+    }
+
+    async function previewRetention() {
+      const res = await api('/api/admin/maintenance/retention', { method: 'POST', body: { dry_run: true } });
+      els.operationsOutput.textContent = JSON.stringify(res.data, null, 2);
+    }
+
+    async function createUser() {
+      await api('/api/admin/users', { method: 'POST', body: { email: els.newUserEmail.value.trim(), role: els.newUserRole.value } });
+      els.newUserEmail.value = '';
+      await refreshUsers();
+    }
+
+    async function refreshUsers() {
+      const res = await api('/api/admin/users?page_size=100');
+      els.users.innerHTML = table(['id', 'email', 'role', 'status'], res.data.items.map((user) => ({ id: escapeHtml(user.id), email: escapeHtml(user.email), role: user.role, status: badge(user.status) })));
+    }
+
+    async function createToken() {
+      const expires = els.tokenExpiresAt.value ? new Date(els.tokenExpiresAt.value).toISOString() : null;
+      const res = await api('/api/admin/tokens', { method: 'POST', body: {
+        user_id: els.tokenUserId.value.trim(),
+        name: els.tokenName.value.trim(),
+        scopes: els.tokenScopes.value.split(',').map((value) => value.trim()).filter(Boolean),
+        expires_at: expires,
+      } });
+      els.tokenSecret.textContent = res.data.token;
+      await refreshTokens();
+    }
+
+    async function refreshTokens() {
+      const res = await api('/api/admin/tokens?page_size=100');
+      els.tokens.innerHTML = table(['name', 'user', 'scopes', 'state', 'actions'], res.data.items.map((token) => ({
+        name: escapeHtml(token.name),
+        user: escapeHtml(token.email || token.user_id),
+        scopes: escapeHtml(token.scopes_json),
+        state: token.revoked_at ? badge('revoked') : badge('active'),
+        actions: `<button class="secondary" data-rotate="${escapeHtml(token.id)}">rotate</button> <button class="secondary" data-revoke="${escapeHtml(token.id)}">revoke</button>`,
+      })));
+      els.tokens.querySelectorAll('[data-rotate]').forEach((button) => button.onclick = async () => {
+        const rotated = await api(`/api/admin/tokens/${encodeURIComponent(button.dataset.rotate)}/rotate`, { method: 'POST', body: {} });
+        els.tokenSecret.textContent = rotated.data.token;
+        await refreshTokens();
+      });
+      els.tokens.querySelectorAll('[data-revoke]').forEach((button) => button.onclick = async () => {
+        await api(`/api/admin/tokens/${encodeURIComponent(button.dataset.revoke)}/revoke`, { method: 'POST', body: {} });
+        await refreshTokens();
+      });
+    }
+
+    async function saveMember() {
+      const projectId = encodeURIComponent(els.adminProjectId.value.trim());
+      const userId = encodeURIComponent(els.memberUserId.value.trim());
+      await api(`/api/projects/${projectId}/members/${userId}`, { method: 'PUT', body: { role: els.memberRole.value, status: els.memberStatus.value } });
+      await refreshMembers();
+    }
+
+    async function refreshMembers() {
+      const projectId = encodeURIComponent(els.adminProjectId.value.trim());
+      const res = await api(`/api/projects/${projectId}/members`);
+      els.members.innerHTML = table(['email', 'role', 'status', 'global'], res.data.items.map((member) => ({ email: escapeHtml(member.email), role: member.role, status: badge(member.status), global: member.global_role })));
+    }
+
+    async function saveSettings() {
+      const projectId = encodeURIComponent(els.adminProjectId.value.trim());
+      await api(`/api/projects/${projectId}/settings`, { method: 'PUT', body: {
+        artifact_retention_days: Number(els.artifactRetention.value),
+        metadata_retention_days: Number(els.metadataRetention.value),
+        audit_retention_days: Number(els.auditRetention.value),
+      } });
+    }
+
+    async function refreshAudit() {
+      const res = await api('/api/admin/audit-logs?page_size=100');
+      els.auditLogs.innerHTML = table(['created', 'actor', 'action', 'entity', 'metadata'], res.data.items.map((entry) => ({
+        created: entry.created_at,
+        actor: escapeHtml(entry.actor),
+        action: escapeHtml(entry.action),
+        entity: escapeHtml(`${entry.entity_type}:${entry.entity_id}`),
+        metadata: escapeHtml(entry.metadata_json),
+      })));
+    }
+
+    async function api(path, options = {}) {
+      const init = { method: options.method || 'GET', headers: {} };
+      if (options.auth !== false) init.headers.Authorization = `Bearer ${els.token.value}`;
+      if (options.body) {
+        init.headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(options.body);
+      }
+      const url = `${apiBase()}${path}`;
+      const response = await fetch(url, init);
+      const text = await response.text();
+      log(`${init.method} ${path} -> ${response.status}\n${text}`);
+      let data;
+      try { data = JSON.parse(text); } catch { data = { code: response.status, message: text, data: {} }; }
+      if (!response.ok) throw new Error(data.message || text);
+      return data;
+    }
+
+    function apiBase() { return els.apiBase.value.replace(/\/$/, ''); }
+    function log(message) { els.log.textContent = `${new Date().toISOString()} ${message}\n\n${els.log.textContent}`.slice(0, 6000); }
+    function badge(value) { return `<span class="status ${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`; }
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+    function table(headers, rows) {
+      if (!rows.length) return '<p class="muted">暂无</p>';
+      return `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${headers.map((h) => `<td>${row[h] ?? ''}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    }
+
+    refreshTasks().catch((err) => log(`initial refresh failed: ${err.message}`));
+  </script>
+</body>
+</html>

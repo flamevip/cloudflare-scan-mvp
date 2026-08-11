@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  worker-and-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run verify:p0
+      - run: npm run verify:agent
+      - run: npm run verify:p1
+      - run: npm run verify:p1:e2e
+      - run: npm run verify:web
+      - run: node --check agent/real/src/scan-agent.js
+      - run: npx wrangler deploy --dry-run --config wrangler.toml
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive infra/tencent
+      - run: terraform -chdir=infra/tencent init -backend=false
+      - run: terraform -chdir=infra/tencent validate
+      - run: terraform -chdir=infra/tencent/bootstrap init -backend=false
+      - run: terraform -chdir=infra/tencent/bootstrap validate
+
+  agent-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: agent/real
+          push: false
+          tags: scan-agent:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

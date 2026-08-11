@@ -1,0 +1,91 @@
+import type { ScanDispatchMessage } from './types/queue';
+
+export interface AiSearchBinding {
+  search(input: unknown): Promise<unknown>;
+  info?(): Promise<unknown>;
+  stats?(): Promise<unknown>;
+}
+
+export interface Env {
+  DB: D1Database;
+  ARTIFACTS: R2Bucket;
+  SCAN_DISPATCH: Queue<ScanDispatchMessage>;
+  SCAN_DEADLETTER?: Queue<ScanDispatchMessage>;
+  AI_SEARCH?: AiSearchBinding;
+  AI_SEARCH_ENABLED?: string;
+  AI_SEARCH_LIMIT?: string;
+  ENV: string;
+  DEFAULT_PROJECT_ID: string;
+  DEV_ADMIN_TOKEN?: string;
+  TOKEN_SCOPE_ENFORCEMENT?: 'report' | 'enforce';
+  AGENT_TOKEN_SECRET: string;
+  /** Backward-compatible local mock switch: inline auto-runs in the Worker, manual waits for an external agent. */
+  MOCK_AGENT_MODE?: 'manual' | 'inline';
+  /** Preferred provider switch. Defaults to MOCK_AGENT_MODE-compatible behavior when unset. */
+  AGENT_PROVIDER?: 'mock' | 'manual' | 'gcp_cloud_run' | 'aliyun_eci' | 'tencent_eks_ci' | 'auto';
+  CALLBACK_BASE_URL?: string;
+  AGENT_SCAN_MODE?: 'mock' | 'http_probe' | 'real_toolchain';
+  HUNTER_ENABLED?: string;
+  HUNTER_API_KEY?: string;
+  HUNTER_BASE_URL?: string;
+  HUNTER_PAGE_SIZE?: string;
+  HUNTER_MAX_PAGES?: string;
+  HUNTER_MAX_RESULTS?: string;
+  HUNTER_TIMEOUT_MS?: string;
+  HUNTER_QUERY_TEMPLATE?: string;
+  AGENT_AUTO_ROUTING_POLICY?: 'region' | 'lowest_cost';
+  AGENT_AUTO_ENABLE_FALLBACK?: string;
+  AGENT_AUTO_CN_PROVIDER?: 'gcp_cloud_run' | 'aliyun_eci';
+  AGENT_AUTO_DEFAULT_PROVIDER?: 'gcp_cloud_run' | 'aliyun_eci';
+  TASK_MAX_RETRY?: string;
+  AGENT_HEARTBEAT_TIMEOUT_SECONDS?: string;
+  AGENT_HEARTBEAT_INTERVAL_SECONDS?: string;
+  AGENT_MAX_CANDIDATES?: string;
+  ARTIFACT_RETENTION_DAYS?: string;
+  METADATA_RETENTION_DAYS?: string;
+  AUDIT_RETENTION_DAYS?: string;
+  AGENT_MAX_COST_USD?: string;
+  AGENT_ESTIMATED_DURATION_SECONDS?: string;
+  AGENT_CPU?: string;
+  AGENT_MEMORY_GIB?: string;
+  GCP_CLOUD_RUN_VCPU_SECOND_PRICE?: string;
+  GCP_CLOUD_RUN_MEMORY_GIB_SECOND_PRICE?: string;
+  ALIYUN_ECI_VCPU_SECOND_PRICE?: string;
+  ALIYUN_ECI_MEMORY_GIB_SECOND_PRICE?: string;
+  GCP_PROJECT_ID?: string;
+  GCP_LOCATION?: string;
+  CLOUD_RUN_JOB_NAME?: string;
+  CLOUD_RUN_CONTAINER_NAME?: string;
+  CLOUD_RUN_DRY_RUN?: string;
+  GCP_ACCESS_TOKEN?: string;
+  GCP_CLIENT_EMAIL?: string;
+  GCP_PRIVATE_KEY?: string;
+  ALIYUN_ACCESS_KEY_ID?: string;
+  ALIYUN_ACCESS_KEY_SECRET?: string;
+  ALIYUN_REGION_ID?: string;
+  ALIYUN_ZONE_ID?: string;
+  ALIYUN_SECURITY_GROUP_ID?: string;
+  ALIYUN_VSWITCH_ID?: string;
+  ALIYUN_ECI_IMAGE?: string;
+  ALIYUN_ECI_CONTAINER_NAME?: string;
+  ALIYUN_ECI_CPU?: string;
+  ALIYUN_ECI_MEMORY?: string;
+  ALIYUN_ECI_DRY_RUN?: string;
+  TENCENT_SECRET_ID?: string;
+  TENCENT_SECRET_KEY?: string;
+  TENCENT_EKS_CI_REGION?: string;
+  TENCENT_EKS_CI_VPC_ID?: string;
+  TENCENT_EKS_CI_SUBNET_ID?: string;
+  TENCENT_EKS_CI_SECURITY_GROUP_IDS?: string;
+  TENCENT_EKS_CI_IMAGE?: string;
+  TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST?: string;
+  TENCENT_EKS_CI_CONTAINER_NAME?: string;
+  TENCENT_EKS_CI_CPU?: string;
+  TENCENT_EKS_CI_MEMORY?: string;
+  TENCENT_EKS_CI_API_TIMEOUT_MS?: string;
+  TENCENT_EKS_CI_DRY_RUN?: string;
+  TENCENT_EKS_CI_READONLY_PREFLIGHT_ENABLED?: string;
+  TENCENT_TCR_SERVER?: string;
+  TENCENT_TCR_USERNAME?: string;
+  TENCENT_TCR_PASSWORD?: string;
+}
