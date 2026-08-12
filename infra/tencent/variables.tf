@@ -1,7 +1,7 @@
 variable "region" {
   description = "Tencent region shared by staging and pilot."
   type        = string
-  default     = "ap-shanghai"
+  default     = "ap-chengdu"
 }
 
 variable "availability_zones" {

@@ -1,7 +1,7 @@
 variable "region" {
   description = "COS state bucket region."
   type        = string
-  default     = "ap-shanghai"
+  default     = "ap-chengdu"
 }
 
 variable "state_bucket" {
