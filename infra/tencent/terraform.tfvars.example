@@ -1,11 +1,11 @@
-region = "ap-shanghai"
+region = "ap-chengdu"
 
 availability_zones = {
-  staging = "ap-shanghai-2"
-  pilot   = "ap-shanghai-3"
+  staging = "ap-chengdu-1"
+  pilot   = "ap-chengdu-1"
 }
 
 cam_user_names = {
-  staging = "scan-staging-worker"
-  pilot   = "scan-pilot-worker"
+  staging = "cloudflare-scan-staging"
+  pilot   = "cloudflare-scan-pilot"
 }
