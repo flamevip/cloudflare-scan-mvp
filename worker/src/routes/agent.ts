@@ -6,6 +6,7 @@ import { markCompleted, markFailed, markRunning } from '../services/state-machin
 import { externalCandidatesKey, getObject, targetCandidatesKey } from '../services/r2-service';
 import { ok, readJson, HttpError } from '../response';
 import { cleanupProviderRun } from '../services/provider-cleanup-service';
+import { recordProviderEgressIp } from '../services/provider-egress-service';
 
 interface AgentBasePayload {
   task_id: string;
@@ -17,6 +18,7 @@ interface AgentBasePayload {
 export async function handleAgent(request: Request, env: Env, path: string, context?: ExecutionContext, requestId?: string): Promise<Response | null> {
   if (!path.startsWith('/api/agent/')) return null;
   const identity = await requireAgentIdentity(request, env);
+  const providerEgressIp = await recordProviderEgressIp(env, identity.task_id, identity.agent_run_id, identity.provider, request.headers.get('CF-Connecting-IP'));
   console.log(JSON.stringify({
     event: 'agent.request',
     request_id: requestId ?? null,
@@ -26,6 +28,7 @@ export async function handleAgent(request: Request, env: Env, path: string, cont
     shard_id: identity.shard_id,
     agent_run_id: identity.agent_run_id,
     provider: identity.provider,
+    provider_egress_ip: providerEgressIp,
   }));
 
   if (path === '/api/agent/config' && request.method === 'GET') {

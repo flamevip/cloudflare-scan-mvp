@@ -16,8 +16,12 @@ const cloudRunService = loadTsModule('worker/src/services/cloud-run-service.ts',
 const aliyunService = loadTsModule('worker/src/services/aliyun-eci-service.ts', {
   './provider-errors': providerErrors,
 });
+const providerEgressService = loadTsModule('worker/src/services/provider-egress-service.ts', {
+  '../ids': { nowIso: () => '2026-08-12T00:00:00.000Z' },
+});
 const tencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
 });
 const agentProvider = loadTsModule('worker/src/services/agent-provider.ts', {
   './aliyun-eci-service': aliyunService,
@@ -156,6 +160,9 @@ const tencentEnv = {
   TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: 'ccr.ccs.tencentyun.com',
   TENCENT_EKS_CI_CPU: '1',
   TENCENT_EKS_CI_MEMORY: '2',
+  TENCENT_EKS_CI_AUTO_CREATE_EIP: 'true',
+  TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS: '5',
+  TENCENT_EKS_CI_EIP_ISP: 'BGP',
   TENCENT_EKS_CI_DRY_RUN: 'true',
 };
 const tencentInput = {
@@ -167,12 +174,38 @@ const tencentInput = {
 const tencentRequest = tencentService.buildCreateEksContainerInstancesRequest(tencentEnv, tencentInput);
 assert.equal(tencentRequest.Replicas, 1);
 assert.equal(tencentRequest.RestartPolicy, 'Never');
+assert.equal(tencentRequest.AutoCreateEip, true);
+assert.deepEqual(JSON.parse(JSON.stringify(tencentRequest.AutoCreateEipAttribute)), {
+  DeletePolicy: 'Release',
+  InternetServiceProvider: 'BGP',
+  InternetMaxBandwidthOut: 5,
+});
 assert.equal(tencentRequest.Containers.length, 1);
 assert.equal(tencentRequest.Containers[0].Image, tencentEnv.TENCENT_EKS_CI_IMAGE);
 assert.deepEqual(JSON.parse(JSON.stringify(tencentRequest.SecurityGroupIds)), ['sg-first', 'sg-second']);
 assert.equal(tencentRequest.Containers[0].EnvironmentVars.find((item) => item.Name === 'MODULES')?.Value, 'http_probe');
 assert.equal(tencentRequest.Containers[0].EnvironmentVars.find((item) => item.Name === 'CALLBACK_TOKEN')?.Value, 'short-callback-token');
 assert.equal('Commands' in tencentRequest.Containers[0], false);
+assert.equal(providerEgressService.normalizePublicIpv4('43.136.10.20'), '43.136.10.20');
+for (const deniedIp of ['10.0.0.1', '100.64.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.0.1', '203.0.113.1', '1.2.3.999', '01.2.3.4']) {
+  assert.equal(providerEgressService.normalizePublicIpv4(deniedIp), null, `${deniedIp} must not be recorded as provider egress`);
+}
+const egressRows = new Map([['run-egress', null]]);
+const egressEnv = {
+  DB: {
+    prepare: (sql) => ({
+      bind: (...values) => ({
+        run: async () => {
+          if (/UPDATE agent_runs/.test(sql) && egressRows.get(values[2]) === null) egressRows.set(values[2], values[0]);
+          return { meta: { changes: 1 } };
+        },
+        first: async () => ({ provider_egress_ip: egressRows.get(values[0]) ?? null }),
+      }),
+    }),
+  },
+};
+assert.equal(await providerEgressService.recordProviderEgressIp(egressEnv, 'task-egress', 'run-egress', 'tencent_eks_ci', '43.136.10.20'), '43.136.10.20');
+assert.equal(await providerEgressService.recordProviderEgressIp(egressEnv, 'task-egress', 'run-egress', 'tencent_eks_ci', '43.136.10.21'), '43.136.10.20', 'first observed egress IP must remain immutable');
 const tencentDryRun = await tencentService.launchTencentEksContainerInstance(tencentEnv, tencentInput);
 assert.equal(tencentDryRun.dry_run, true);
 assert.match(tencentDryRun.provider_job_id, /^dry-run:tencent-eks-ci\//);
@@ -184,25 +217,58 @@ const tencentLiveEnv = {
   TENCENT_SECRET_ID: 'AKIDEXAMPLE',
   TENCENT_SECRET_KEY: 'SECRETKEYEXAMPLE',
 };
+const createActions = [];
+let createPayload;
+const creatingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+}, {
+  fetch: async (_url, init) => {
+    const action = new Headers(init.headers).get('X-TC-Action');
+    createActions.push(action);
+    if (action === 'CreateEKSContainerInstances') {
+      createPayload = JSON.parse(init.body);
+      return jsonResponse({ Response: { RequestId: 'req-create', EksCiIds: ['eksci-created'] } });
+    }
+    if (action === 'DescribeEKSContainerInstances') {
+      return jsonResponse({ Response: { RequestId: 'req-describe-created', TotalCount: 1, EksCis: [{ EksCiId: 'eksci-created', AutoCreatedEipId: 'eip-created', EipAddress: '43.136.10.20' }] } });
+    }
+    throw new Error(`unexpected Tencent action ${action}`);
+  },
+});
+const createdLaunch = await creatingTencentService.launchTencentEksContainerInstance(tencentLiveEnv, tencentInput);
+assert.deepEqual(createActions, ['CreateEKSContainerInstances', 'DescribeEKSContainerInstances']);
+assert.equal(createPayload.AutoCreateEip, true);
+assert.equal(createPayload.Replicas, 1);
+assert.equal(createdLaunch.provider_job_id, 'eksci-created');
+assert.equal(createdLaunch.provider_eip_id, 'eip-created');
+assert.equal(createdLaunch.provider_egress_ip, '43.136.10.20');
 const deleteActions = [];
+let deletePayload;
 const deletingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
 }, {
   fetch: async (_url, init) => {
     const action = new Headers(init.headers).get('X-TC-Action');
     deleteActions.push(action);
-    if (action === 'DeleteEKSContainerInstances') return jsonResponse({ Response: { RequestId: 'req-delete' } });
+    if (action === 'DeleteEKSContainerInstances') {
+      deletePayload = JSON.parse(init.body);
+      return jsonResponse({ Response: { RequestId: 'req-delete' } });
+    }
     if (action === 'DescribeEKSContainerInstances') return jsonResponse({ Response: { RequestId: 'req-describe', TotalCount: 0, EksCis: [] } });
     throw new Error(`unexpected Tencent action ${action}`);
   },
 });
 const confirmedDelete = await deletingTencentService.deleteTencentEksContainerInstances(tencentLiveEnv, ['eksci-fixture']);
 assert.deepEqual(deleteActions, ['DeleteEKSContainerInstances', 'DescribeEKSContainerInstances']);
+assert.deepEqual(deletePayload, { EksCiIds: ['eksci-fixture'], ReleaseAutoCreatedEip: true });
 assert.equal(confirmedDelete.deleted, true);
 assert.equal(confirmedDelete.already_absent, false);
 
 const duplicateDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
 }, {
   fetch: async () => jsonResponse({ Response: { Error: { Code: 'ResourceNotFound.EksCi', Message: 'already gone' }, RequestId: 'req-absent' } }),
 });
@@ -211,6 +277,7 @@ assert.equal((await duplicateDeleteService.deleteTencentEksContainerInstances(te
 const reconcileActions = [];
 const reconcilingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
 }, {
   fetch: async (_url, init) => {
     const action = new Headers(init.headers).get('X-TC-Action');
@@ -225,6 +292,7 @@ const reconcilingTencentService = loadTsModule('worker/src/services/tencent-eks-
 const reconciledLaunch = await reconcilingTencentService.launchTencentEksContainerInstance(tencentLiveEnv, tencentInput);
 assert.deepEqual(reconcileActions, ['CreateEKSContainerInstances', 'DescribeEKSContainerInstances']);
 assert.equal(reconciledLaunch.provider_job_id, 'eksci-reconciled');
+assert.equal(tencentService.buildCreateEksContainerInstancesRequest({ ...tencentEnv, TENCENT_EKS_CI_AUTO_CREATE_EIP: 'false' }, tencentInput).AutoCreateEip, undefined);
 const tencentServiceSource = readFileSync(resolve(root, 'worker/src/services/tencent-eks-ci-service.ts'), 'utf8');
 assert.match(tencentServiceSource, /delete accepted but absence is not yet confirmed/, 'cleanup must not complete before Describe confirms absence');
 assert.throws(() => tencentService.buildCreateEksContainerInstancesRequest({ ...tencentEnv, TENCENT_EKS_CI_IMAGE: 'ccr.ccs.tencentyun.com/scan-agent/scan-agent:latest' }, tencentInput), /immutable sha256 digest/);

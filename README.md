@@ -4,7 +4,7 @@
 
 - 本地 `wrangler.toml` 固定使用 `mock_inline + dev-token + mock`，不调用腾讯 API。
 - staging/pilot 使用 `config/wrangler.tencent.template.toml` 和受保护 GitHub Environments；两套 Cloudflare 与腾讯网络/CAM 资源相互隔离。
-- D1 当前 additive migration 为 `0001`–`0009`；`0008` 加入管理、保留和取消字段，`0009` 加入 dispatch/rotation 竞态保护与最后一个 owner 保护。
+- D1 当前 additive migration 为 `0001`–`0010`；`0008` 加入管理、保留和取消字段，`0009` 加入竞态保护，`0010` 记录每次运行的腾讯 EIP ID 与实际出口 IP。
 - pilot 固定单授权根域名、单 Agent、`rate_limit=1`、最多 100 候选、最长 15 分钟、无 Hunter，并强制 `subdomain + http_probe + nuclei`。
 - 腾讯实例终态、主动取消、心跳超时和任务总超时都会进入 Delete/定时清理闭环；迟到的 Create 返回也会重新登记并清理。
 - 完整部署、验收和回滚步骤以 `docs/tencent-eks-ci-e2e-runbook.md` 为准。仓库实现不代表真实腾讯 apply、镜像推送或授权域名扫描已经执行。
@@ -62,7 +62,7 @@ Node.js v22.22.3/npm 10.9.8 环境下已验证 Wrangler local D1 migration、Wor
 
 ## Historical Cloudflare staging smoke status (2026-06-16; not the isolated P1 staging environment)
 
-The following section records an older mock smoke using migrations through `0006`. It is not evidence that the current `0007`–`0009`, isolated Tencent staging/pilot infrastructure, or live EKS CI acceptance has been deployed.
+The following section records an older mock smoke using migrations through `0006`. It is not evidence that the current `0007`–`0010`, isolated Tencent staging/pilot infrastructure, or live EKS CI acceptance has been deployed.
 
 2026-06-16 已在 Cloudflare account `ee7bb93469d8ee4f1c81c90854d7de47` 创建并验证 staging 资源：
 
@@ -515,6 +515,9 @@ TENCENT_EKS_CI_IMAGE=ccr.ccs.tencentyun.com/scan-agent/scan-agent@sha256:<64-hex
 TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ccr.ccs.tencentyun.com
 TENCENT_EKS_CI_CPU=1
 TENCENT_EKS_CI_MEMORY=2
+TENCENT_EKS_CI_AUTO_CREATE_EIP=true
+TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS=5
+TENCENT_EKS_CI_EIP_ISP=BGP
 ```
 
 敏感配置只能使用 Wrangler secrets：
@@ -529,7 +532,7 @@ npx wrangler secret put TENCENT_TCR_PASSWORD
 
 `TENCENT_TCR_SERVER` 是非敏感 registry host，只有 server、username、password 三项全部存在时才会向腾讯请求附加 `ImageRegistryCredentials`。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
 
-腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存一个 `EksCiId`；terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances`。
+腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。
 
 建议 CAM 最小权限：
 
@@ -539,7 +542,7 @@ tke:DescribeEKSContainerInstances
 tke:DeleteEKSContainerInstances
 ```
 
-网络建议使用无入站规则的私有子网，通过受控 NAT 出站访问 TCR、Worker callback 和已授权目标。首次 live smoke 只允许一个 `mock` 容器；`http_probe` 和 `real_toolchain` 仍需独立目标授权。
+网络使用无入站规则的隔离子网；每次 Create 自动分配一个独立 EIP，且固定 `Replicas=1`，因此并发容器不共享出口 IP。地址只能在创建/回调后得知，已释放地址未来仍可能被腾讯地址池复用。首次 live smoke 只允许一个 `mock` 容器；`http_probe` 和 `real_toolchain` 仍需独立目标授权。
 
 ## P1 local hardening
 

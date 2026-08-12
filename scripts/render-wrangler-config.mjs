@@ -34,6 +34,10 @@ function validateInputs(env) {
   const expectedMode = values.ENVIRONMENT === 'pilot' ? 'real_toolchain' : 'mock';
   if (values.AGENT_SCAN_MODE !== expectedMode) throw new Error(`AGENT_SCAN_MODE must be ${expectedMode} for ${values.ENVIRONMENT}`);
   if (!['true', 'false'].includes(values.TENCENT_EKS_CI_DRY_RUN)) throw new Error('TENCENT_EKS_CI_DRY_RUN must be true or false');
+  if (values.TENCENT_EKS_CI_AUTO_CREATE_EIP !== 'true') throw new Error('TENCENT_EKS_CI_AUTO_CREATE_EIP must be true for isolated per-run egress');
+  const eipBandwidth = Number(values.TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS);
+  if (!Number.isInteger(eipBandwidth) || eipBandwidth < 1 || eipBandwidth > 100) throw new Error('TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS must be an integer from 1 to 100');
+  if (!['BGP', 'CMCC', 'CTCC', 'CUCC'].includes(values.TENCENT_EKS_CI_EIP_ISP)) throw new Error('TENCENT_EKS_CI_EIP_ISP is invalid');
   if (!/^https:\/\/[^\s/]+(?:\/.*)?$/i.test(values.CALLBACK_BASE_URL) || /localhost|127\.0\.0\.1|\[::1\]/i.test(values.CALLBACK_BASE_URL)) {
     throw new Error('CALLBACK_BASE_URL must be a non-local HTTPS URL');
   }

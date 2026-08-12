@@ -61,47 +61,6 @@ resource "tencentcloud_security_group_rule_set" "scan" {
   }
 }
 
-resource "tencentcloud_eip" "nat" {
-  for_each                   = local.environments
-  name                       = "scan-${each.key}-nat"
-  internet_charge_type       = "TRAFFIC_POSTPAID_BY_HOUR"
-  internet_max_bandwidth_out = 20
-  tags                       = merge(var.tags, { environment = each.key })
-}
-
-resource "tencentcloud_nat_gateway" "scan" {
-  for_each            = local.environments
-  name                = "scan-${each.key}-nat"
-  vpc_id              = tencentcloud_vpc.scan[each.key].id
-  nat_product_version = 1
-  bandwidth           = 20
-  max_concurrent      = 1000000
-  assigned_eip_set    = [tencentcloud_eip.nat[each.key].public_ip]
-  tags                = merge(var.tags, { environment = each.key })
-}
-
-resource "tencentcloud_route_table" "scan" {
-  for_each = local.environments
-  vpc_id   = tencentcloud_vpc.scan[each.key].id
-  name     = "scan-${each.key}-private"
-  tags     = merge(var.tags, { environment = each.key })
-}
-
-resource "tencentcloud_route_table_entry" "default_nat" {
-  for_each               = local.environments
-  route_table_id         = tencentcloud_route_table.scan[each.key].id
-  destination_cidr_block = "0.0.0.0/0"
-  next_type              = "NAT"
-  next_hub               = tencentcloud_nat_gateway.scan[each.key].id
-  description            = "Controlled NAT egress"
-}
-
-resource "tencentcloud_route_table_association" "scan" {
-  for_each       = local.environments
-  route_table_id = tencentcloud_route_table.scan[each.key].id
-  subnet_id      = tencentcloud_subnet.scan[each.key].id
-}
-
 resource "tencentcloud_tcr_instance" "scan" {
   name                  = var.tcr_instance_name
   instance_type         = "basic"

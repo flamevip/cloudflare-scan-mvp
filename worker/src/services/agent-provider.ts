@@ -29,6 +29,8 @@ export interface AgentProviderLaunchResult {
   region: string;
   image: string;
   dry_run: boolean;
+  provider_eip_id?: string | null;
+  provider_egress_ip?: string | null;
 }
 
 export interface InitialProviderRunMetadata {

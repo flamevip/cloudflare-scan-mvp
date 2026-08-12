@@ -268,7 +268,7 @@
         <p>assets: ${d.asset_count} findings: ${d.finding_count} artifacts: ${d.artifact_count}</p>
         ${['pending', 'provisioning', 'retrying', 'running'].includes(d.status) ? '<button id="cancelTaskBtn" class="secondary">取消任务</button>' : ''}
         <h3>Shards</h3>${table(['id', 'status', 'module', 'started', 'finished'], shards.data.items.map((s) => ({ id: s.id, status: badge(s.status), module: s.module, started: s.started_at || '', finished: s.finished_at || '' })))}
-        <h3>Agent Runs</h3>${table(['id', 'provider', 'status', 'image', 'started', 'finished'], runs.data.items.map((r) => ({ id: r.id, provider: r.provider, status: badge(r.status), image: r.image || '', started: r.started_at || '', finished: r.finished_at || '' })))}
+        <h3>Agent Runs</h3>${table(['id', 'provider', 'egress IP', 'status', 'image', 'started', 'finished'], runs.data.items.map((r) => ({ id: r.id, provider: r.provider, 'egress IP': escapeHtml(r.provider_egress_ip || 'pending'), status: badge(r.status), image: r.image || '', started: r.started_at || '', finished: r.finished_at || '' })))}
       `;
       const cancelButton = document.querySelector('#cancelTaskBtn');
       if (cancelButton) cancelButton.onclick = () => cancelSelectedTask(taskId);
