@@ -17,9 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: tencent-registry
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ vars.TCR_HOST }}
           username: ${{ secrets.TCR_USERNAME }}
@@ -42,15 +42,15 @@ jobs:
           tags: ${{ steps.image.outputs.uri }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: anchore/sbom-action@v0
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ steps.image.outputs.uri }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: agent-image.spdx.json
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - run: cosign sign --yes "${{ steps.image.outputs.uri }}@${{ steps.build.outputs.digest }}"
       - run: cosign verify "${{ steps.image.outputs.uri }}@${{ steps.build.outputs.digest }}" --certificate-identity-regexp="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build-agent.yml@refs/.+$" --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-sbom
           path: agent-image.spdx.json
