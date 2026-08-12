@@ -71,6 +71,8 @@ terraform -chdir=infra/tencent apply tfplan
 4. 用 GitHub OIDC/Cosign 签名并立即验证；
 5. 在 Job Summary 输出 `TENCENT_EKS_CI_IMAGE=<repo>:<tag>@sha256:<digest>`。
 
+构建使用 GitHub 托管 Runner 时，不得用 `0.0.0.0/0` 或控制台的“一键放通所有公网访问”。工作流会先在 Job Summary 和日志中输出本次 Runner 的单个 IPv4 `/32`，并等待最多 15 分钟。操作员只把该 `/32` 临时加入 TCR 公网白名单；构建、SBOM 和签名验证结束后立即删除该条目。`tencent-registry` Environment 使用仅覆盖 `scan-agent` 命名空间、30 天过期的读写服务账号；EKS 运行环境使用另一组仅覆盖同一命名空间的只读服务账号。
+
 把同一条 digest URI 写入 staging 和 pilot 的 `TENCENT_EKS_CI_IMAGE`，禁止只填 tag。`TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST` 必须与 URI 的 registry host 完全一致。
 
 ## 5. Cloudflare 资源和配置
