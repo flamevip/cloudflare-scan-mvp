@@ -60,7 +60,7 @@ jobs:
         with:
           registry: ${{ vars.TCR_HOST }}
           username: ${{ secrets.TCR_USERNAME }}
-          password: ${{ secrets.TCR_PASSWORD }}
+          password: ${{ secrets.TCR_PASSWORD_CURRENT }}
       - id: image
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
