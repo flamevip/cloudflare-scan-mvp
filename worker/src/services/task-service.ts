@@ -140,7 +140,7 @@ export async function listShards(env: Env, context: AuthContext, taskId: string)
 export async function listAgentRuns(env: Env, context: AuthContext, taskId: string): Promise<unknown> {
   await requireTaskAccess(env, context, taskId);
   const rows = await env.DB.prepare(`
-    SELECT id, task_id, shard_id, provider, provider_job_id, status, image, region,
+    SELECT id, task_id, shard_id, provider, provider_job_id, provider_eip_id, provider_egress_ip, status, image, region,
       started_at, finished_at, duration_seconds, exit_code, error_message,
       created_at, updated_at, last_heartbeat_at, timeout_at, retryable
     FROM agent_runs

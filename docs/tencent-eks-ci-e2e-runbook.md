@@ -13,7 +13,7 @@
 
 ## 2. 环境与职责分离
 
-两套 Cloudflare 资源必须分别创建：Worker、D1、R2、AI Search、主 Queue 和 Dead-letter Queue。腾讯侧 staging/pilot 使用不同 VPC、子网、安全组、NAT/EIP 和 CAM 用户，只共享同一个摘要固定的 TCR 镜像。
+两套 Cloudflare 资源必须分别创建：Worker、D1、R2、AI Search、主 Queue 和 Dead-letter Queue。腾讯侧 staging/pilot 使用不同 VPC、子网、安全组和 CAM 用户，只共享同一个摘要固定的 TCR 镜像。不存在环境级共享 NAT；每个 EKS CI 自动创建并绑定自己的 EIP。
 
 GitHub Environments：
 
@@ -53,7 +53,8 @@ terraform -chdir=infra/tencent apply tfplan
 
 完成标准：
 
-- staging/pilot VPC、子网、SG、NAT/EIP 相互隔离；
+- staging/pilot VPC、子网、SG 相互隔离，Terraform 不创建共享 NAT/EIP；
+- Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；
 - SG 无入站，出站规则按顺序先拒绝 RFC1918、CGNAT、loopback、link-local/metadata，再允许公网；
 - 私有 TCR namespace/repository 已创建；
 - 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 策略；
@@ -95,7 +96,7 @@ TENCENT_TCR_PASSWORD
 - 选择目标 Environment；
 - `enable_live_provider=false`；
 - `approval_reference` 可留空；
-- 工作流先验证渲染结果、应用 additive migrations `0001`–`0009`、部署 Worker，再同步 secrets。
+- 工作流先验证渲染结果、应用 additive migrations `0001`–`0010`、部署 Worker，再同步 secrets。
 
 远程 D1 必须确认至少存在 `0007_provider_cleanup.sql`、`0008_p1_pilot.sql` 和 `0009_p1_lifecycle_guards.sql`。
 
@@ -131,7 +132,7 @@ Content-Type: application/json
 
 验收：
 
-1. `agent_runs.provider_job_id` 为一个真实 `eksci-*` ID；
+1. `agent_runs.provider_job_id` 为一个真实 `eksci-*` ID，`provider_egress_ip` 在首次 callback 后为腾讯公网地址；
 2. 收到持续 heartbeat、ingest 和 complete；
 3. 任务和 run 进入成功终态；
 4. Delete 成功，5 分钟内通过 Describe 确认实例不存在；
@@ -214,7 +215,7 @@ Content-Type: application/json
 2. 保持腾讯和 TCR 凭据有效，查询 `provider_cleanup_completed_at IS NULL` 的真实 `EksCiId`。
 3. 触发 convergence/cleanup，必要时由审批后的操作员按记录 ID 执行 Delete，并用 Describe 确认不存在。
 4. 确认所有真实实例清理完成后，撤销 CAM Access Key 和 TCR robot 凭据。
-5. 保留 D1 `0001`–`0009` additive migrations；失败只使用新的 forward-fix migration，不回滚或重命名字段。
+5. 保留 D1 `0001`–`0010` additive migrations；失败只使用新的 forward-fix migration，不回滚或重命名字段。
 6. 保留审计、SBOM、Cosign 验证结果、镜像 digest、审批记录和 Terraform plan/apply 记录。
 
 官方 API：

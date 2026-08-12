@@ -12,14 +12,15 @@ const infraWorkflow = text('.github/workflows/tencent-infra.yml');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
 
-for (const resource of ['tencentcloud_vpc', 'tencentcloud_subnet', 'tencentcloud_security_group', 'tencentcloud_security_group_rule_set', 'tencentcloud_eip', 'tencentcloud_nat_gateway', 'tencentcloud_route_table', 'tencentcloud_route_table_entry', 'tencentcloud_route_table_association', 'tencentcloud_tcr_instance', 'tencentcloud_tcr_namespace', 'tencentcloud_tcr_repository', 'tencentcloud_cam_policy', 'tencentcloud_cam_user_policy_attachment']) {
+for (const resource of ['tencentcloud_vpc', 'tencentcloud_subnet', 'tencentcloud_security_group', 'tencentcloud_security_group_rule_set', 'tencentcloud_tcr_instance', 'tencentcloud_tcr_namespace', 'tencentcloud_tcr_repository', 'tencentcloud_cam_policy', 'tencentcloud_cam_user_policy_attachment']) {
   assert.match(main, new RegExp(`resource "${resource}"`), `missing ${resource}`);
 }
 assert.match(main, /environments = toset\(\["staging", "pilot"\]\)/);
 for (const cidr of ['10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16']) assert.match(main, new RegExp(escapeRegExp(cidr)));
 assert.ok(main.indexOf('dynamic "egress"') < main.indexOf('Allow public DNS'), 'deny egress rules must precede public allow');
-assert.match(main, /max_concurrent\s+= 1000000/);
-assert.match(main, /next_type\s+= "NAT"/);
+for (const sharedEgressResource of ['tencentcloud_eip', 'tencentcloud_nat_gateway', 'tencentcloud_route_table_entry']) {
+  assert.doesNotMatch(main, new RegExp(`resource "${sharedEgressResource}"`), `shared egress resource ${sharedEgressResource} must not exist`);
+}
 assert.match(main, /open_public_operation\s+= true/);
 for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances']) assert.match(main, new RegExp(action));
 assert.doesNotMatch(main + bootstrap, /tencentcloud_cam_access_key|secret_key|secret_id/i, 'Terraform must not create or store CAM access keys');
@@ -42,13 +43,15 @@ assert.match(infraWorkflow, /encrypt=true/);
 assert.match(staging, /ENVIRONMENT=staging/);
 assert.match(staging, /TOKEN_SCOPE_ENFORCEMENT=report/);
 assert.match(staging, /TENCENT_EKS_CI_DRY_RUN=true/);
+assert.match(staging, /TENCENT_EKS_CI_AUTO_CREATE_EIP=true/);
 assert.match(pilot, /ENVIRONMENT=pilot/);
 assert.match(pilot, /TOKEN_SCOPE_ENFORCEMENT=enforce/);
 assert.match(pilot, /AGENT_SCAN_MODE=real_toolchain/);
 assert.match(pilot, /AGENT_MAX_CANDIDATES=100/);
 assert.match(pilot, /TENCENT_EKS_CI_DRY_RUN=true/);
+assert.match(pilot, /TENCENT_EKS_CI_AUTO_CREATE_EIP=true/);
 
-console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, shared_tcr: true, ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
+console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], per_run_auto_eip: true, shared_nat: false, ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, shared_tcr: true, ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 
 function text(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8');

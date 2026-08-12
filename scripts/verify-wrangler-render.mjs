@@ -22,6 +22,9 @@ const baseEnv = {
   TENCENT_EKS_CI_SECURITY_GROUP_IDS: 'sg-fixture',
   TENCENT_EKS_CI_IMAGE: `registry.example.test/scan-agent/scan-agent@sha256:${'a'.repeat(64)}`,
   TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: 'registry.example.test',
+  TENCENT_EKS_CI_AUTO_CREATE_EIP: 'true',
+  TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS: '5',
+  TENCENT_EKS_CI_EIP_ISP: 'BGP',
   TENCENT_EKS_CI_DRY_RUN: 'true',
   TENCENT_TCR_SERVER: 'registry.example.test',
   D1_DATABASE_NAME: 'scan-staging',
@@ -40,6 +43,7 @@ try {
   assert.doesNotMatch(toml, /DEV_ADMIN_TOKEN/, 'remote config must not ship a development admin token binding');
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);
   assert.match(toml, /TENCENT_EKS_CI_DRY_RUN = "true"/);
+  assert.match(toml, /TENCENT_EKS_CI_AUTO_CREATE_EIP = "true"/);
 
   const unpinned = run({ ...baseEnv, TENCENT_EKS_CI_IMAGE: 'registry.example.test/scan-agent:latest' }, resolve(work, 'invalid-image.toml'));
   assert.notEqual(unpinned.status, 0);

@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import type { AgentProviderLaunchResult, LaunchAgentProviderInput } from './agent-provider';
 import { ProviderLaunchError, classifyProviderHttpError, classifyTencentProviderCode, providerConfigMissing } from './provider-errors';
+import { normalizePublicIpv4 } from './provider-egress-service';
 
 const TENCENT_TKE_ENDPOINT = 'https://tke.tencentcloudapi.com/';
 const TENCENT_TKE_HOST = 'tke.tencentcloudapi.com';
@@ -37,10 +38,18 @@ export interface TencentCreateEksCiRequest {
   Cpu: number;
   Replicas: 1;
   RestartPolicy: 'Never';
+  AutoCreateEip?: boolean;
+  AutoCreateEipAttribute?: {
+    DeletePolicy: 'Release';
+    InternetServiceProvider: 'BGP' | 'CMCC' | 'CTCC' | 'CUCC';
+    InternetMaxBandwidthOut: number;
+  };
   ImageRegistryCredentials?: TencentImageRegistryCredential[];
 }
 
 interface TencentEksCi {
+  AutoCreatedEipId?: string;
+  EipAddress?: string;
   EksCiId?: string;
   EksCiName?: string;
   Status?: string;
@@ -98,13 +107,16 @@ export async function launchTencentEksContainerInstance(env: Env, input: LaunchA
         safe_message: `tencent_eks_ci create returned ${ids.length} container instance identifiers; expected exactly one`,
       });
     }
-    return { provider_job_id: ids[0], region: config.region, image: config.image, dry_run: false };
+    const instance = await describeTencentEksContainerInstances(env, { ids: [ids[0]], limit: 1 })
+      .then((result) => result.instances.find((candidate) => candidate.EksCiId === ids[0]) ?? null)
+      .catch(() => null);
+    return launchResult(ids[0], config.region, config.image, instance);
   } catch (error) {
     const shouldReconcile = !(error instanceof ProviderLaunchError) || (error.phase === 'request' && error.retryable);
     if (!shouldReconcile && error instanceof ProviderLaunchError) throw error;
     const reconciled = await reconcileTencentEksCiByName(env, eksCiName).catch(() => null);
     if (reconciled?.EksCiId) {
-      return { provider_job_id: reconciled.EksCiId, region: config.region, image: config.image, dry_run: false };
+      return launchResult(reconciled.EksCiId, config.region, config.image, reconciled);
     }
     if (error instanceof ProviderLaunchError) throw error;
     throw new ProviderLaunchError({
@@ -157,6 +169,15 @@ export function buildCreateEksContainerInstancesRequest(
     RestartPolicy: 'Never',
   };
 
+  if (parseBoolean(env.TENCENT_EKS_CI_AUTO_CREATE_EIP, true)) {
+    request.AutoCreateEip = true;
+    request.AutoCreateEipAttribute = {
+      DeletePolicy: 'Release',
+      InternetServiceProvider: parseEipIsp(env.TENCENT_EKS_CI_EIP_ISP),
+      InternetMaxBandwidthOut: parseInteger(env.TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS, 5, 1, 100, 'TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS'),
+    };
+  }
+
   const registryCredential = resolveRegistryCredential(env);
   if (registryCredential) request.ImageRegistryCredentials = [registryCredential];
   return request;
@@ -189,7 +210,10 @@ export async function deleteTencentEksContainerInstances(env: Env, ids: string[]
   const secretId = required(env.TENCENT_SECRET_ID, 'TENCENT_SECRET_ID');
   const secretKey = required(env.TENCENT_SECRET_KEY, 'TENCENT_SECRET_KEY');
   try {
-    const response = await callTencentTkeApi(env, 'DeleteEKSContainerInstances', { EksCiIds: realIds }, region, secretId, secretKey);
+    const response = await callTencentTkeApi(env, 'DeleteEKSContainerInstances', {
+      EksCiIds: realIds,
+      ReleaseAutoCreatedEip: true,
+    }, region, secretId, secretKey);
     const confirmation = await describeTencentEksContainerInstances(env, { ids: realIds, limit: realIds.length });
     const remaining = new Set(confirmation.instances.map((instance) => instance.EksCiId).filter(Boolean));
     if (confirmation.total_count > 0 || realIds.some((id) => remaining.has(id))) {
@@ -350,6 +374,39 @@ function parsePositiveNumber(value: string | undefined, fallback: number, min: n
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw configValidationError(`${field} must be between ${min} and ${max}`);
   return parsed;
+}
+
+function parseInteger(value: string | undefined, fallback: number, min: number, max: number, field: string): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw configValidationError(`${field} must be an integer between ${min} and ${max}`);
+  return parsed;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw configValidationError('TENCENT_EKS_CI_AUTO_CREATE_EIP must be true or false');
+}
+
+function parseEipIsp(value: string | undefined): 'BGP' | 'CMCC' | 'CTCC' | 'CUCC' {
+  const normalized = (value ?? 'BGP').trim().toUpperCase();
+  if (!['BGP', 'CMCC', 'CTCC', 'CUCC'].includes(normalized)) {
+    throw configValidationError('TENCENT_EKS_CI_EIP_ISP must be BGP, CMCC, CTCC, or CUCC');
+  }
+  return normalized as 'BGP' | 'CMCC' | 'CTCC' | 'CUCC';
+}
+
+function launchResult(providerJobId: string, region: string, image: string, instance: TencentEksCi | null): AgentProviderLaunchResult {
+  return {
+    provider_job_id: providerJobId,
+    region,
+    image,
+    dry_run: false,
+    provider_eip_id: instance?.AutoCreatedEipId ?? null,
+    provider_egress_ip: instance?.EipAddress ? normalizePublicIpv4(instance.EipAddress) : null,
+  };
 }
 
 function parseApiTimeout(value: string | undefined): number {

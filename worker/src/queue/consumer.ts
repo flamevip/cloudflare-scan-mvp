@@ -98,7 +98,7 @@ export async function processDispatchMessage(env: Env, message: ScanDispatchMess
         const activeAttempt = await updateProviderAttempt(env, task.id, agentRunId, candidate, failures.map((failure) => failure.safe_message));
         if (!activeAttempt) return;
         const result = await launchAgentProvider(env, candidate, { task, shard_id: shardId, agent_run_id: agentRunId, callback_token: token });
-        const persisted = await updateProviderLaunch(env, task.id, agentRunId, candidate, result.provider_job_id, result.image, result.region, failures.map((failure) => failure.safe_message));
+        const persisted = await updateProviderLaunch(env, task.id, agentRunId, candidate, result.provider_job_id, result.image, result.region, result.provider_eip_id ?? null, result.provider_egress_ip ?? null, failures.map((failure) => failure.safe_message));
         if (!persisted) {
           await recordLateProviderLaunchAndCleanup(env, task.id, agentRunId, candidate, result.provider_job_id, result.image, result.region);
         }
@@ -153,13 +153,15 @@ async function updateProviderAttempt(env: Env, taskId: string, agentRunId: strin
   return changed(result);
 }
 
-async function updateProviderLaunch(env: Env, taskId: string, agentRunId: string, provider: string, providerJobId: string, image: string, region: string, failures: string[]): Promise<boolean> {
+async function updateProviderLaunch(env: Env, taskId: string, agentRunId: string, provider: string, providerJobId: string, image: string, region: string, providerEipId: string | null, providerEgressIp: string | null, failures: string[]): Promise<boolean> {
   const note = failures.length ? `fallback after ${failures.join('; ')}` : null;
   const result = await env.DB.prepare(`
-    UPDATE agent_runs SET provider = ?, provider_job_id = ?, image = ?, region = ?, error_message = ?, updated_at = ?
+    UPDATE agent_runs SET provider = ?, provider_job_id = ?, image = ?, region = ?,
+      provider_eip_id = COALESCE(?, provider_eip_id), provider_egress_ip = COALESCE(?, provider_egress_ip),
+      error_message = ?, updated_at = ?
     WHERE id = ? AND task_id = ? AND status IN ('starting', 'running')
       AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status NOT IN ('completed', 'failed', 'timeout', 'cancelled'))
-  `).bind(provider, providerJobId, image, region, note, nowIso(), agentRunId, taskId, taskId).run();
+  `).bind(provider, providerJobId, image, region, providerEipId, providerEgressIp, note, nowIso(), agentRunId, taskId, taskId).run();
   return changed(result);
 }
 
