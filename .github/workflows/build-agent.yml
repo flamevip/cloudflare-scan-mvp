@@ -77,8 +77,6 @@ jobs:
           context: agent/real
           push: true
           tags: ${{ steps.image.outputs.uri }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ steps.image.outputs.uri }}@${{ steps.build.outputs.digest }}
