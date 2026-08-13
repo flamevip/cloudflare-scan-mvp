@@ -41,6 +41,7 @@ assert.match(infraWorkflow, /environment: tencent-infrastructure/);
 assert.match(infraWorkflow, /options: \[plan, apply, forget-retired-tcr-state\]/);
 assert.match(infraWorkflow, /encrypt=true/);
 assert.match(infraWorkflow, /state pull > tencent-state-before-retired-tcr\.json/);
+assert.match(infraWorkflow, /path: tencent-state-before-retired-tcr\.json/);
 for (const address of ['tencentcloud_tcr_repository.scan', 'tencentcloud_tcr_namespace.scan', 'tencentcloud_tcr_instance.scan']) assert.match(infraWorkflow, new RegExp(escapeRegExp(`'${address}'`)));
 assert.match(infraWorkflow, /retention-days: 7/);
 assert.match(infraWorkflow, /inputs\.action == 'plan' \|\| inputs\.action == 'apply'/, 'state reconciliation must not run a plan before stale TCR addresses are forgotten');
