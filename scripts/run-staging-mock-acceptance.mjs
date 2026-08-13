@@ -13,10 +13,10 @@ if (mode === 'verify-dry-run') {
   const deadline = Date.now() + cleanupWaitMs;
   let instanceCount = -1;
   do {
-    const preflight = await preflight();
-    assert.equal(preflight.dry_run_payloads?.[0]?.dry_run_enabled, true, 'staging Worker is not back in dry-run mode');
-    assert.equal(preflight.cloud_check?.ok, true, 'post-rollback Tencent read-only preflight failed');
-    instanceCount = Number(preflight.cloud_check?.total_count ?? -1);
+    const cloud = await getPreflight();
+    assert.equal(cloud.dry_run_payloads?.[0]?.dry_run_enabled, true, 'staging Worker is not back in dry-run mode');
+    assert.equal(cloud.cloud_check?.ok, true, 'post-rollback Tencent read-only preflight failed');
+    instanceCount = Number(cloud.cloud_check?.total_count ?? -1);
     if (instanceCount === 0) break;
     if (Date.now() >= deadline) break;
     console.log(JSON.stringify({ event: 'staging.acceptance.cleanup_wait', tencent_instance_count: instanceCount }));
@@ -46,7 +46,7 @@ const report = {
 
 let terminalError = null;
 try {
-  const before = await preflight();
+  const before = await getPreflight();
   assert.equal(before.dry_run_payloads?.[0]?.dry_run_enabled, false, 'staging Worker live provider was not enabled');
   assert.equal(before.cloud_check?.ok, true, 'Tencent read-only preflight failed before acceptance');
   assert.equal(Number(before.cloud_check?.total_count ?? -1), 0, 'refusing to start: Tencent EKS CI instance list is not empty');
@@ -73,7 +73,7 @@ try {
     const [task, runsResponse, cloud] = await Promise.all([
       api(`/api/tasks/${encodeURIComponent(report.task_id)}`),
       api(`/api/tasks/${encodeURIComponent(report.task_id)}/agent-runs`),
-      preflight(),
+      getPreflight(),
     ]);
     const runs = runsResponse.items ?? [];
     assert.ok(runs.length <= 1, `single-instance invariant violated: observed ${runs.length} agent runs`);
@@ -123,7 +123,7 @@ try {
     }
   }
   try {
-    const after = await preflight();
+    const after = await getPreflight();
     report.tencent_instance_count_after = Number(after.cloud_check?.total_count ?? -1);
     if (after.cloud_check?.ok !== true || report.tencent_instance_count_after !== 0) {
       terminalError ??= new Error('Tencent EKS CI instance cleanup was not confirmed');
@@ -195,7 +195,7 @@ function updateReportFromRun(targetReport, run) {
   };
 }
 
-async function preflight() {
+async function getPreflight() {
   return api('/api/admin/providers/preflight', {
     method: 'POST',
     body: { provider: 'tencent_eks_ci', targets: ['example.com'], modules: ['http_probe'], rate_limit: 1, timeout_minutes: 5, cloud_check: true },

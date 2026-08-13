@@ -62,6 +62,7 @@ assert.match(stagingAcceptanceScript, /refusing to start: staging has/);
 assert.match(stagingAcceptanceScript, /timeout_minutes: 5/);
 assert.match(stagingAcceptanceScript, /provider_egress_ip/);
 assert.match(stagingAcceptanceScript, /AbortSignal\.timeout\(20_000\)/);
+assert.doesNotMatch(stagingAcceptanceScript, /const preflight = await preflight\(\)/, 'preflight verification must not shadow its own function');
 
 assert.match(staging, /ENVIRONMENT=staging/);
 assert.match(staging, /TOKEN_SCOPE_ENFORCEMENT=report/);
