@@ -1,5 +1,7 @@
 name = "{{WORKER_NAME}}"
-main = "worker/src/index.ts"
+# This rendered config lives under work/, so source and migration paths are
+# relative to that directory rather than to the repository root.
+main = "../worker/src/index.ts"
 compatibility_date = "2026-06-03"
 
 [vars]
@@ -40,7 +42,7 @@ TENCENT_EKS_CI_READONLY_PREFLIGHT_ENABLED = "true"
 binding = "DB"
 database_name = "{{D1_DATABASE_NAME}}"
 database_id = "{{D1_DATABASE_ID}}"
-migrations_dir = "migrations/d1"
+migrations_dir = "../migrations/d1"
 
 [[r2_buckets]]
 binding = "ARTIFACTS"
