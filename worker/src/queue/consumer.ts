@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import type { ScanDispatchMessage } from '../types/queue';
+import type { ScanDispatchMessage, TaskCreatedMessage } from '../types/queue';
 import { newId, nowIso } from '../ids';
 import { agentTokenTtlSeconds, createAgentToken } from '../services/agent-token';
 import { deleteAgentProviderJob, initialProviderRunMetadata, isExternalAgentProvider, launchAgentProvider, resolveProviderLaunchPlan } from '../services/agent-provider';
@@ -9,6 +9,8 @@ import { runInlineMockAgent } from '../services/mock-agent-service';
 import { markFailed, markRetrying } from '../services/state-machine';
 import { toProviderLaunchError, serializeProviderError, type ProviderLaunchError } from '../services/provider-errors';
 import { cleanupProviderRun } from '../services/provider-cleanup-service';
+import { isTencentEksCiDryRun } from '../services/tencent-eks-ci-service';
+import { writeAudit } from '../services/audit-service';
 
 interface TaskRow {
   id: string;
@@ -26,7 +28,20 @@ interface TaskRow {
 }
 
 export async function processDispatchMessage(env: Env, message: ScanDispatchMessage): Promise<void> {
-  if (message.type !== 'task.created') return;
+  if (message.type === 'deployment.canary') {
+    await writeAudit(env, {
+      actor: 'system',
+      action: 'queue.consumer.canary',
+      entity_type: 'deployment_canary',
+      entity_id: message.nonce,
+      metadata: {
+        environment: env.ENV,
+        tencent_dry_run_enabled: isTencentEksCiDryRun(env.TENCENT_EKS_CI_DRY_RUN),
+      },
+    });
+    return;
+  }
+  assertRequiredProviderMode(env, message);
   const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(message.task_id).first<TaskRow>();
   if (!task) {
     await env.SCAN_DEADLETTER?.send(message);
@@ -121,7 +136,7 @@ export function summarizeLaunchFailures(failures: ProviderLaunchError[], fallbac
   };
 }
 
-async function handleLaunchFailure(env: Env, message: ScanDispatchMessage, task: TaskRow, shardId: string, agentRunId: string, reason: string, retryable: boolean, maxRetry: number): Promise<void> {
+async function handleLaunchFailure(env: Env, message: TaskCreatedMessage, task: TaskRow, shardId: string, agentRunId: string, reason: string, retryable: boolean, maxRetry: number): Promise<void> {
   const decision = decideRetry({ attempt: message.attempt, maxRetry, retryable });
   if (decision.action === 'retry' && decision.next_attempt) {
     const transitioned = await markRetrying(env, task.id, shardId, agentRunId, reason, decision.next_attempt);
@@ -135,6 +150,16 @@ async function handleLaunchFailure(env: Env, message: ScanDispatchMessage, task:
   if (transitioned === false) return;
   await env.SCAN_DEADLETTER?.send({ ...message, attempt: message.attempt || 1, created_at: nowIso() });
   await auditQueueDecision(env, task.id, task.project_id, 'queue.deadletter', reason, message.attempt, maxRetry, decision.reason);
+}
+
+export class QueueProviderModeMismatchError extends Error {}
+
+function assertRequiredProviderMode(env: Env, message: TaskCreatedMessage): void {
+  if (!message.required_provider_mode) return;
+  const actual = isTencentEksCiDryRun(env.TENCENT_EKS_CI_DRY_RUN) ? 'dry_run' : 'live';
+  if (message.required_provider_mode !== actual) {
+    throw new QueueProviderModeMismatchError(`queue consumer provider mode is ${actual}; message requires ${message.required_provider_mode}`);
+  }
 }
 
 async function recordProviderNote(env: Env, taskId: string, agentRunId: string, note: string): Promise<void> {

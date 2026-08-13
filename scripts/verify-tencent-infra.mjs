@@ -53,6 +53,7 @@ assert.match(stagingAcceptanceWorkflow, /STAGING_ADMIN_TOKEN: \$\{\{ secrets\.ST
 assert.match(stagingAcceptanceWorkflow, /TASK_MAX_RETRY = \\"1\\"','TASK_MAX_RETRY = \\"0\\"/);
 assert.match(stagingAcceptanceWorkflow, /name: Refresh staging dry-run Worker/);
 assert.match(stagingAcceptanceWorkflow, /name: Verify zero-instance precondition[\s\S]*verify-dry-run/);
+assert.match(stagingAcceptanceWorkflow, /name: Verify live Queue consumer propagation[\s\S]*verify-live-consumer/);
 assert.match(stagingAcceptanceWorkflow, /name: Restore staging dry-run Worker[\s\S]*if: always\(\)/);
 assert.match(stagingAcceptanceWorkflow, /name: Verify rollback and Tencent cleanup[\s\S]*if: always\(\)/);
 assert.match(stagingAcceptanceWorkflow, /ACCEPTANCE_CLEANUP_WAIT_MS: \"300000\"/);
@@ -62,6 +63,7 @@ assert.match(stagingAcceptanceScript, /refusing to start: staging has/);
 assert.match(stagingAcceptanceScript, /timeout_minutes: 5/);
 assert.match(stagingAcceptanceScript, /provider_egress_ip/);
 assert.match(stagingAcceptanceScript, /AbortSignal\.timeout\(20_000\)/);
+assert.match(stagingAcceptanceScript, /live acceptance was consumed by a dry-run Queue version/);
 assert.doesNotMatch(stagingAcceptanceScript, /const preflight = await preflight\(\)/, 'preflight verification must not shadow its own function');
 
 assert.match(staging, /ENVIRONMENT=staging/);

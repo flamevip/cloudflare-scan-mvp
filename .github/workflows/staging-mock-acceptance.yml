@@ -79,6 +79,9 @@ jobs:
         run: |
           npx wrangler deploy --dry-run --config work/wrangler.staging.live.toml
           npx wrangler deploy --config work/wrangler.staging.live.toml
+      - name: Verify live Queue consumer propagation
+        timeout-minutes: 2
+        run: node scripts/run-staging-mock-acceptance.mjs verify-live-consumer
       - name: Run one real mock container acceptance
         timeout-minutes: 10
         run: node scripts/run-staging-mock-acceptance.mjs run

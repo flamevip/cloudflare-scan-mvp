@@ -35,6 +35,7 @@ const providerPreflight = loadTsModule('worker/src/services/provider-preflight.t
   './tencent-eks-ci-service': tencentService,
   './provider-errors': providerErrors,
 });
+const consumerAudits = [];
 const consumer = loadTsModule('worker/src/queue/consumer.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
   '../services/agent-token': { createAgentToken: async () => 'agent-token-redacted', agentTokenTtlSeconds: () => 900 },
@@ -45,7 +46,31 @@ const consumer = loadTsModule('worker/src/queue/consumer.ts', {
   '../services/state-machine': { markFailed: async () => undefined, markRetrying: async () => undefined },
   '../services/provider-errors': providerErrors,
   '../services/provider-cleanup-service': { cleanupProviderRun: async () => ({ attempted: true, completed: true, already_absent: false, error: null }) },
+  '../services/tencent-eks-ci-service': tencentService,
+  '../services/audit-service': { writeAudit: async (_env, event) => consumerAudits.push(event) },
 });
+let modeGuardTouchedDb = false;
+const modeGuardEnv = {
+  TENCENT_EKS_CI_DRY_RUN: 'true',
+  ENV: 'staging',
+  DB: { prepare() { modeGuardTouchedDb = true; throw new Error('mode guard touched DB'); } },
+};
+await assert.rejects(
+  consumer.processDispatchMessage(modeGuardEnv, {
+    type: 'task.created',
+    task_id: 'task-live-guard',
+    project_id: 'project-default',
+    config_r2_key: 'tasks/task-live-guard/config.json',
+    targets_r2_key: 'tasks/task-live-guard/targets.txt',
+    attempt: 1,
+    created_at: '2026-08-14T00:00:00.000Z',
+    required_provider_mode: 'live',
+  }),
+  (error) => error instanceof consumer.QueueProviderModeMismatchError && /requires live/.test(error.message),
+);
+assert.equal(modeGuardTouchedDb, false, 'mode mismatch must fail before task state or provider launch is touched');
+await consumer.processDispatchMessage(modeGuardEnv, { type: 'deployment.canary', nonce: 'canary_test', created_at: '2026-08-14T00:00:00.000Z' });
+assert.equal(consumerAudits.at(-1)?.metadata?.tencent_dry_run_enabled, true);
 let diagnosticsMode = 'success';
 const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnostics-service.ts', {
   '../ids': { nowIso: () => '2026-06-15T00:00:00.000Z' },

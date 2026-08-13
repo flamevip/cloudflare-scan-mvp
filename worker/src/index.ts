@@ -12,7 +12,7 @@ import { handleSearch } from './routes/search';
 import { handleProjects } from './routes/projects';
 import { handleProviders } from './routes/providers';
 import { handleAdmin } from './routes/admin';
-import { processDispatchMessage } from './queue/consumer';
+import { processDispatchMessage, QueueProviderModeMismatchError } from './queue/consumer';
 import { sweepTimedOutAgentRuns } from './services/timeout-service';
 import { sweepProviderCleanup } from './services/provider-cleanup-service';
 import { sweepRetention } from './services/retention-service';
@@ -64,10 +64,19 @@ export default {
 
   async queue(batch: MessageBatch<ScanDispatchMessage>, env: Env): Promise<void> {
     for (const message of batch.messages) {
-      console.log(JSON.stringify({ event: 'queue.dispatch.start', task_id: message.body.task_id, attempt: message.body.attempt }));
-      await processDispatchMessage(env, message.body);
-      message.ack();
-      console.log(JSON.stringify({ event: 'queue.dispatch.ack', task_id: message.body.task_id, attempt: message.body.attempt }));
+      const identity = message.body.type === 'task.created'
+        ? { task_id: message.body.task_id, attempt: message.body.attempt }
+        : { canary_nonce: message.body.nonce };
+      console.log(JSON.stringify({ event: 'queue.dispatch.start', message_type: message.body.type, ...identity }));
+      try {
+        await processDispatchMessage(env, message.body);
+        message.ack();
+        console.log(JSON.stringify({ event: 'queue.dispatch.ack', message_type: message.body.type, ...identity }));
+      } catch (error) {
+        if (!(error instanceof QueueProviderModeMismatchError)) throw error;
+        message.retry({ delaySeconds: 5 });
+        console.warn(JSON.stringify({ event: 'queue.dispatch.provider_mode_retry', message_type: message.body.type, ...identity, error: error.message }));
+      }
     }
   },
 

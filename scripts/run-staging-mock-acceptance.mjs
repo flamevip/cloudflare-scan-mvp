@@ -27,6 +27,14 @@ if (mode === 'verify-dry-run') {
   process.exit(0);
 }
 
+if (mode === 'verify-live-consumer') {
+  const cloud = await getPreflight();
+  assert.equal(cloud.dry_run_payloads?.[0]?.dry_run_enabled, false, 'staging Worker live provider was not enabled');
+  await verifyConsumerCanary(false);
+  console.log(JSON.stringify({ event: 'staging.acceptance.live_consumer_verified' }));
+  process.exit(0);
+}
+
 assert.equal(mode, 'run', `unsupported acceptance mode: ${mode}`);
 const report = {
   started_at: new Date().toISOString(),
@@ -80,6 +88,7 @@ try {
     assert.ok(Number(cloud.cloud_check?.total_count ?? -1) <= 1, `single-instance invariant violated: Tencent reports ${cloud.cloud_check?.total_count ?? 'unknown'} instances`);
     const run = runs[0] ?? null;
     if (run) updateReportFromRun(report, run);
+    assert.ok(!run?.provider_job_id?.startsWith('dry-run:'), 'live acceptance was consumed by a dry-run Queue version');
     report.status = task.status;
     report.artifact_count = Number(task.artifact_count ?? 0);
     console.log(JSON.stringify({
@@ -209,6 +218,29 @@ async function assertNoActiveTasks() {
   assert.equal(active.length, 0, `refusing to start: staging has ${active.length} active tasks`);
 }
 
+async function verifyConsumerCanary(expectedDryRun) {
+  const deadline = Date.now() + 60_000;
+  let lastObservedMode = null;
+  while (Date.now() < deadline) {
+    const queued = await api('/api/admin/providers/consumer-canary', { method: 'POST', body: {} });
+    const attemptDeadline = Math.min(deadline, Date.now() + 10_000);
+    while (Date.now() < attemptDeadline) {
+      const query = new URLSearchParams({ action: 'queue.consumer.canary', entity_id: queued.nonce, page: '1', page_size: '1' });
+      const response = await api(`/api/admin/audit-logs?${query}`);
+      const item = response.items?.[0];
+      if (item) {
+        const metadata = parseJsonObject(item.metadata_json);
+        lastObservedMode = metadata.tencent_dry_run_enabled === true;
+        if (lastObservedMode === expectedDryRun) return;
+        break;
+      }
+      await delay(1_000);
+    }
+    await delay(2_000);
+  }
+  throw new Error(`Queue consumer did not converge to ${expectedDryRun ? 'dry_run' : 'live'} within 60 seconds; last observed mode=${lastObservedMode}`);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? 'GET',
@@ -241,6 +273,15 @@ function parseJsonArray(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value ?? '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
