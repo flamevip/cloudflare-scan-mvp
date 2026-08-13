@@ -6,7 +6,7 @@ on:
       action:
         required: true
         type: choice
-        options: [plan, apply]
+        options: [plan, apply, forget-retired-tcr-state]
 
 permissions:
   contents: read
@@ -35,6 +35,28 @@ jobs:
           -backend-config="prefix=cloudflare-scan-mvp/tencent/p1.tfstate"
           -backend-config="encrypt=true"
       - run: terraform -chdir=infra/tencent validate
-      - run: terraform -chdir=infra/tencent plan -out=tfplan
+      - name: Back up state before forgetting retired TCR records
+        if: inputs.action == 'forget-retired-tcr-state'
+        run: terraform -chdir=infra/tencent state pull > tencent-state-before-retired-tcr.json
+      - name: Upload the pre-reconciliation state backup
+        if: inputs.action == 'forget-retired-tcr-state'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tencent-state-before-retired-tcr-${{ github.run_id }}
+          path: infra/tencent/tencent-state-before-retired-tcr.json
+          retention-days: 7
+      - name: Forget only the already-deleted TCR resources
+        if: inputs.action == 'forget-retired-tcr-state'
+        run: |
+          terraform -chdir=infra/tencent state rm \
+            'tencentcloud_tcr_repository.scan' \
+            'tencentcloud_tcr_namespace.scan' \
+            'tencentcloud_tcr_instance.scan'
+          if terraform -chdir=infra/tencent state list | grep -q '^tencentcloud_tcr_'; then
+            echo 'retired TCR addresses remain in Terraform state' >&2
+            exit 1
+          fi
+      - if: inputs.action == 'plan' || inputs.action == 'apply'
+        run: terraform -chdir=infra/tencent plan -out=tfplan
       - if: inputs.action == 'apply'
         run: terraform -chdir=infra/tencent apply -auto-approve tfplan
