@@ -23,6 +23,7 @@ if (mode === 'verify-dry-run') {
     await delay(10_000);
   } while (true);
   assert.equal(instanceCount, 0, 'Tencent EKS CI instances remain after rollback');
+  await verifyConsumerCanary(true);
   console.log(JSON.stringify({ event: 'staging.acceptance.rollback_verified', dry_run: true, tencent_instance_count: 0 }));
   process.exit(0);
 }
