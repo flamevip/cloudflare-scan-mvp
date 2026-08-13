@@ -31,26 +31,27 @@ if (isMain()) {
 
 export async function runAgent(env = readEnv()) {
   env = normalizeRuntimeEnv(env);
-  const [config, targetsText, candidatesText] = await Promise.all([
-    getJson(env, '/api/agent/config'),
-    getText(env, '/api/agent/targets'),
-    getOptionalText(env, '/api/agent/candidates'),
-  ]);
-  const targets = parseLines(targetsText);
-  if (targets.length === 0) throw new Error('no targets downloaded');
-  const modules = resolveModules(env, config);
-  const candidates = mergeCandidates(targets, candidatesText).slice(0, env.MAX_CANDIDATES);
-
-  await callback(env, '/api/agent/heartbeat', basePayload(env, {
-    phase: 'downloaded_inputs',
-    target_count: targets.length,
-    candidate_count: candidates.length,
-    modules,
-    scan_mode: env.SCAN_MODE,
-  }));
-
-  const stopHeartbeat = startHeartbeatLoop(env);
+  const heartbeat = startHeartbeatLoop(env);
   try {
+    await heartbeat.send({ phase: 'starting' });
+    const [config, targetsText, candidatesText] = await Promise.all([
+      getJson(env, '/api/agent/config'),
+      getText(env, '/api/agent/targets'),
+      getOptionalText(env, '/api/agent/candidates'),
+    ]);
+    const targets = parseLines(targetsText);
+    if (targets.length === 0) throw new Error('no targets downloaded');
+    const modules = resolveModules(env, config);
+    const candidates = mergeCandidates(targets, candidatesText).slice(0, env.MAX_CANDIDATES);
+
+    await heartbeat.send({
+      phase: 'downloaded_inputs',
+      target_count: targets.length,
+      candidate_count: candidates.length,
+      modules,
+      scan_mode: env.SCAN_MODE,
+    });
+
     assertWithinDeadline(env);
     const result = await executeScanMode(env, { config, targets, modules, candidates });
     assertWithinDeadline(env);
@@ -61,12 +62,12 @@ export async function runAgent(env = readEnv()) {
       artifacts: result.artifacts,
     });
 
-    await stopHeartbeat();
+    await heartbeat.stop();
     await callback(env, '/api/agent/complete', basePayload(env, { exit_code: 0 }));
     writeOut(`scan-agent completed task ${env.TASK_ID} mode=${env.SCAN_MODE} assets=${result.assets.length} findings=${result.findings.length}\n`);
     return result;
   } finally {
-    await stopHeartbeat();
+    await heartbeat.stop();
   }
 }
 
@@ -482,8 +483,13 @@ function startHeartbeatLoop(env) {
   let stopped = false;
   let sequence = 0;
   let inFlight = null;
-  const tick = () => {
-    if (stopped || inFlight) return;
+  const send = async (details = { phase: 'running' }, waitForSlot = true) => {
+    if (stopped) return;
+    if (inFlight) {
+      if (!waitForSlot) return;
+      await inFlight;
+    }
+    if (stopped) return;
     let remainingSeconds;
     try {
       remainingSeconds = Math.max(0, Math.floor(remainingMs(env) / 1000));
@@ -492,7 +498,7 @@ function startHeartbeatLoop(env) {
     }
     sequence += 1;
     inFlight = callback(env, '/api/agent/heartbeat', basePayload(env, {
-      phase: 'running',
+      ...details,
       sequence,
       remaining_seconds: remainingSeconds,
     })).catch((error) => {
@@ -500,15 +506,19 @@ function startHeartbeatLoop(env) {
     }).finally(() => {
       inFlight = null;
     });
+    await inFlight;
   };
-  const timer = setInterval(tick, env.HEARTBEAT_INTERVAL_SECONDS * 1000);
+  const timer = setInterval(() => { void send({ phase: 'running' }, false); }, env.HEARTBEAT_INTERVAL_SECONDS * 1000);
   timer.unref?.();
-  return async () => {
-    if (!stopped) {
-      stopped = true;
-      clearInterval(timer);
-    }
-    if (inFlight) await inFlight;
+  return {
+    send,
+    stop: async () => {
+      if (!stopped) {
+        stopped = true;
+        clearInterval(timer);
+      }
+      if (inFlight) await inFlight;
+    },
   };
 }
 

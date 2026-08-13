@@ -529,7 +529,7 @@ npx wrangler secret put TENCENT_SECRET_KEY
 
 生产试运行使用公开 GHCR 镜像，因此不会向腾讯请求附加 `ImageRegistryCredentials`，也不需要持久化 GitHub registry token。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
 
-腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。
+腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。定时收敛和删除前会读取实例容器状态及 `DescribeEKSContainerInstanceEvent`，把经过截断和脱敏的状态、原因、消息、退出码及最近事件保存到 `agent_runs.provider_*` 诊断字段；事件查询失败不会阻断资源清理。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。GHCR 构建显式固定为 `linux/amd64`。
 
 建议 CAM 最小权限：
 
