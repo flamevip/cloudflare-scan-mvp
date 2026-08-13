@@ -11,6 +11,8 @@ This root creates isolated staging and pilot VPC/subnet/security-group resources
 
 Each EKS container instance is launched by the Worker with its own auto-created EIP. `Replicas=1`, so concurrent containers do not share an egress address. The Worker requests EIP release when it deletes the instance; cleanup retries cover terminal, cancelled, and timed-out runs. Tencent may later reuse a released address, and the address is only known after creation.
 
+The protected infrastructure workflow includes a one-time `forget-retired-tcr-state` action for the three historical TCR addresses that were deleted when the project moved to public GHCR. It uploads a seven-day pre-change state backup, removes only those fixed addresses from Terraform state, and never creates or deletes a Tencent resource. The COS backend also retains version history.
+
 The ordered security-group rule set has no inbound access and rejects private, carrier-grade NAT, loopback, link-local, and metadata ranges before allowing public egress. Confirm EIP attachment, rule priority, DNS reachability, callback IP recording, and EIP release with a staging mock before pilot promotion.
 
 The Terraform provider is pinned to `1.83.21`; CI resolves and validates that exact provider version. Never run `apply` from a pull-request workflow.
