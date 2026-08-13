@@ -144,6 +144,7 @@ export async function listAgentRuns(env: Env, context: AuthContext, taskId: stri
       started_at, finished_at, duration_seconds, exit_code, error_message,
       provider_status, provider_container_state, provider_status_reason, provider_status_message, provider_exit_code,
       provider_events_json, provider_diagnostics_updated_at,
+      provider_cleanup_attempts, provider_cleanup_last_error, provider_cleanup_completed_at,
       created_at, updated_at, last_heartbeat_at, timeout_at, retryable
     FROM agent_runs
     WHERE task_id = ?
