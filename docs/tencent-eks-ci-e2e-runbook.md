@@ -9,18 +9,17 @@
 - staging 第一次真实实例只能使用 `SCAN_MODE=mock`、单副本、`RestartPolicy=Never`、5 分钟超时、无 Hunter。
 - pilot 只允许一个书面授权根域名，固定 `subdomain + http_probe + nuclei`、`rate_limit=1`、`max_agents=1`、最多 100 个候选、最长 15 分钟、无 Hunter、无用户模板。
 - 不得执行真实 Terraform apply、关闭 dry-run 或发起授权目标扫描，除非当次操作已获得独立人工审批。
-- CAM/TCR/Cloudflare 凭据不得进入 Terraform state、源码、命令参数、日志、preflight 输出或扫描产物。
+- CAM/Cloudflare 凭据不得进入 Terraform state、源码、命令参数、日志、preflight 输出或扫描产物。
 
 ## 2. 环境与职责分离
 
-两套 Cloudflare 资源必须分别创建：Worker、D1、R2、AI Search、主 Queue 和 Dead-letter Queue。腾讯侧 staging/pilot 使用不同 VPC、子网、安全组和 CAM 用户，只共享同一个摘要固定的 TCR 镜像。不存在环境级共享 NAT；每个 EKS CI 自动创建并绑定自己的 EIP。
+两套 Cloudflare 资源必须分别创建：Worker、D1、R2、AI Search、主 Queue 和 Dead-letter Queue。腾讯侧 staging/pilot 使用不同 VPC、子网、安全组和 CAM 用户，只共享同一个摘要固定的公开 GHCR 镜像。不存在环境级共享 NAT；每个 EKS CI 自动创建并绑定自己的 EIP。
 
 GitHub Environments：
 
 - `staging`：staging Worker 变量和独立 Cloudflare/Tencent secrets，required reviewers。
 - `pilot`：pilot Worker 变量和独立 Cloudflare/Tencent secrets，required reviewers。
 - `tencent-infrastructure`：Terraform COS backend 和基础设施凭据，required reviewers。
-- `tencent-registry`：TCR 推送凭据和镜像签名权限，required reviewers。
 
 CAM Access Key 由操作员在 Terraform 之外创建，只写入对应 GitHub Environment 和 Cloudflare Worker secrets。完成清理后才能撤销。
 
@@ -39,7 +38,7 @@ terraform -chdir=infra/tencent/bootstrap init -migrate-state -backend-config=bac
 
 确认 COS 控制台显示：ACL 为 private、服务端加密为 AES256、版本控制已启用。保留 bootstrap state 和 apply 审批记录。
 
-### 3.2 staging/pilot 网络、TCR 和 CAM
+### 3.2 staging/pilot 网络和 CAM
 
 复制 `infra/tencent/backend.hcl.example` 与 `terraform.tfvars.example` 到被忽略的本地文件。先人工创建两个无 Access Key 的 CAM 用户，再执行：
 
@@ -56,7 +55,7 @@ terraform -chdir=infra/tencent apply tfplan
 - staging/pilot VPC、子网、SG 相互隔离，Terraform 不创建共享 NAT/EIP；
 - Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；
 - SG 无入站，出站规则按顺序先拒绝 RFC1918、CGNAT、loopback、link-local/metadata，再允许公网；
-- 私有 TCR namespace/repository 已创建；
+- Terraform 配置不包含 TCR，镜像由 GitHub Actions 推送到公开 GHCR；
 - 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 策略；
 - 输出的 VPC/subnet/SG ID 分别写入 GitHub Environment variables；
 - state 只存在启用加密和版本控制的 COS backend。
@@ -71,7 +70,7 @@ terraform -chdir=infra/tencent apply tfplan
 4. 用 GitHub OIDC/Cosign 签名并立即验证；
 5. 在 Job Summary 输出 `TENCENT_EKS_CI_IMAGE=<repo>:<tag>@sha256:<digest>`。
 
-构建使用 GitHub 托管 Runner 时，不得用 `0.0.0.0/0` 或控制台的“一键放通所有公网访问”。工作流会先在 Job Summary 和日志中输出本次 Runner 的单个 IPv4 `/32`，并等待最多 15 分钟。操作员只把该 `/32` 临时加入 TCR 公网白名单；构建、SBOM 和签名验证结束后立即删除该条目。`tencent-registry` Environment 使用仅覆盖 `scan-agent` 命名空间、30 天过期的读写服务账号；EKS 运行环境使用另一组仅覆盖同一命名空间的只读服务账号。
+工作流使用仓库自带的短期 `GITHUB_TOKEN` 向 `ghcr.io/flamevip/cloudflare-scan-mvp-agent` 推送镜像，不保存 registry 长期凭据。首次构建完成后必须在 GitHub Packages 中确认 package 为 public；腾讯 EKS CI 只拉取公开 digest，不接收 GitHub Token。
 
 把同一条 digest URI 写入 staging 和 pilot 的 `TENCENT_EKS_CI_IMAGE`，禁止只填 tag。`TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST` 必须与 URI 的 registry host 完全一致。
 
@@ -87,11 +86,9 @@ CLOUDFLARE_ACCOUNT_ID
 AGENT_TOKEN_SECRET
 TENCENT_SECRET_ID
 TENCENT_SECRET_KEY
-TENCENT_TCR_USERNAME
-TENCENT_TCR_PASSWORD
 ```
 
-`AGENT_TOKEN_SECRET` 使用独立的 256-bit 随机值。TCR 账户使用只读 robot 凭据。部署工作流通过 stdin 同步 Worker secrets，不把明文放入命令参数。
+`AGENT_TOKEN_SECRET` 使用独立的 256-bit 随机值。公开 GHCR 镜像不需要 registry secret。部署工作流通过 stdin 同步 Worker secrets，不把明文放入命令参数。
 
 第一次运行 `deploy-worker` 时：
 
@@ -126,7 +123,7 @@ Content-Type: application/json
 }
 ```
 
-确认 provider 配置有效、dry-run 为 true、镜像是 digest、replicas=1、restart policy=`Never`，所有 callback/CAM/TCR secrets 均被脱敏。只读 cloud check 只能执行有界 Describe，不证明 Create、镜像拉取、调度容量或回调出站能力。
+确认 provider 配置有效、dry-run 为 true、镜像是 digest、replicas=1、restart policy=`Never`，所有 callback/CAM secrets 均被脱敏。只读 cloud check 只能执行有界 Describe，不证明 Create、镜像拉取、调度容量或回调出站能力。
 
 ### 6.2 一次真实 mock 容器
 
@@ -214,9 +211,9 @@ Content-Type: application/json
 ## 10. 回滚
 
 1. 立即用 `enable_live_provider=false` 重新部署 staging/pilot，停止创建新任务。
-2. 保持腾讯和 TCR 凭据有效，查询 `provider_cleanup_completed_at IS NULL` 的真实 `EksCiId`。
+2. 保持腾讯 CAM 凭据有效，查询 `provider_cleanup_completed_at IS NULL` 的真实 `EksCiId`。
 3. 触发 convergence/cleanup，必要时由审批后的操作员按记录 ID 执行 Delete，并用 Describe 确认不存在。
-4. 确认所有真实实例清理完成后，撤销 CAM Access Key 和 TCR robot 凭据。
+4. 确认所有真实实例清理完成后，撤销 CAM Access Key。
 5. 保留 D1 `0001`–`0010` additive migrations；失败只使用新的 forward-fix migration，不回滚或重命名字段。
 6. 保留审计、SBOM、Cosign 验证结果、镜像 digest、审批记录和 Terraform plan/apply 记录。
 

@@ -61,27 +61,6 @@ resource "tencentcloud_security_group_rule_set" "scan" {
   }
 }
 
-resource "tencentcloud_tcr_instance" "scan" {
-  name                  = var.tcr_instance_name
-  instance_type         = "basic"
-  open_public_operation = true
-  tags                  = var.tags
-}
-
-resource "tencentcloud_tcr_namespace" "scan" {
-  instance_id = tencentcloud_tcr_instance.scan.id
-  name        = var.tcr_namespace
-  is_public   = false
-}
-
-resource "tencentcloud_tcr_repository" "scan" {
-  instance_id    = tencentcloud_tcr_instance.scan.id
-  namespace_name = tencentcloud_tcr_namespace.scan.name
-  name           = var.tcr_repository
-  brief_desc     = "Digest-pinned Cloudflare scan agent"
-  description    = "Built by protected CI; tags are not accepted by pilot Worker configuration."
-}
-
 resource "tencentcloud_cam_policy" "eks_ci_runner" {
   for_each    = local.environments
   name        = "scan-${each.key}-eks-ci-runner"
