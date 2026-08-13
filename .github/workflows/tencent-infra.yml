@@ -43,7 +43,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tencent-state-before-retired-tcr-${{ github.run_id }}
-          path: infra/tencent/tencent-state-before-retired-tcr.json
+          path: tencent-state-before-retired-tcr.json
           retention-days: 7
       - name: Forget only the already-deleted TCR resources
         if: inputs.action == 'forget-retired-tcr-state'
