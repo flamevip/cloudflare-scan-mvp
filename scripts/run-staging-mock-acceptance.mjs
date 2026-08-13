@@ -10,11 +10,11 @@ const maxWaitMs = clampNumber(process.env.ACCEPTANCE_MAX_WAIT_MS, 5 * 60_000, 60
 
 if (mode === 'verify-dry-run') {
   const cleanupWaitMs = clampNumber(process.env.ACCEPTANCE_CLEANUP_WAIT_MS, 0, 0, 5 * 60_000);
+  await waitForProviderMode(true);
   const deadline = Date.now() + cleanupWaitMs;
   let instanceCount = -1;
   do {
     const cloud = await getPreflight();
-    assert.equal(cloud.dry_run_payloads?.[0]?.dry_run_enabled, true, 'staging Worker is not back in dry-run mode');
     assert.equal(cloud.cloud_check?.ok, true, 'post-rollback Tencent read-only preflight failed');
     instanceCount = Number(cloud.cloud_check?.total_count ?? -1);
     if (instanceCount === 0) break;
@@ -29,8 +29,7 @@ if (mode === 'verify-dry-run') {
 }
 
 if (mode === 'verify-live-consumer') {
-  const cloud = await getPreflight();
-  assert.equal(cloud.dry_run_payloads?.[0]?.dry_run_enabled, false, 'staging Worker live provider was not enabled');
+  await waitForProviderMode(false);
   await verifyConsumerCanary(false);
   console.log(JSON.stringify({ event: 'staging.acceptance.live_consumer_verified' }));
   process.exit(0);
@@ -210,6 +209,23 @@ async function getPreflight() {
     method: 'POST',
     body: { provider: 'tencent_eks_ci', targets: ['example.com'], modules: ['http_probe'], rate_limit: 1, timeout_minutes: 5, cloud_check: true },
   });
+}
+
+async function waitForProviderMode(expectedDryRun) {
+  const deadline = Date.now() + 60_000;
+  let lastObservedMode = null;
+  while (Date.now() < deadline) {
+    const cloud = await getPreflight();
+    lastObservedMode = cloud.dry_run_payloads?.[0]?.dry_run_enabled;
+    if (lastObservedMode === expectedDryRun) return cloud;
+    console.log(JSON.stringify({
+      event: 'staging.acceptance.provider_mode_wait',
+      expected_mode: expectedDryRun ? 'dry_run' : 'live',
+      observed_mode: lastObservedMode === true ? 'dry_run' : lastObservedMode === false ? 'live' : 'unknown',
+    }));
+    await delay(2_000);
+  }
+  throw new Error(`staging Worker did not converge to ${expectedDryRun ? 'dry_run' : 'live'} within 60 seconds; last observed mode=${lastObservedMode}`);
 }
 
 async function assertNoActiveTasks() {
