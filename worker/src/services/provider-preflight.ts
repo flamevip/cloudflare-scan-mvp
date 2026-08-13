@@ -69,6 +69,7 @@ async function buildReadOnlyCloudCheck(env: Env, input: ProviderPreflightInput, 
       attempted: true,
       ok: true,
       request_id: result.request_id,
+      total_count: result.total_count,
       checks: ['endpoint_reachable', 'tc3_signature_accepted', 'describe_permission_accepted'],
       limitations: ['create_permission_not_checked', 'image_pull_not_checked', 'subnet_capacity_not_checked', 'runtime_egress_not_checked'],
     };
