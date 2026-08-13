@@ -39,6 +39,8 @@ try {
   assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
   const toml = await readFile(output, 'utf8');
   assert.doesNotMatch(toml, /\{\{[A-Z0-9_]+\}\}/);
+  assert.match(toml, /main = "\.\.\/worker\/src\/index\.ts"/, 'rendered config must resolve the Worker entry point from work/');
+  assert.match(toml, /migrations_dir = "\.\.\/migrations\/d1"/, 'rendered config must resolve migrations from work/');
   assert.doesNotMatch(toml, /DEV_ADMIN_TOKEN/, 'remote config must not ship a development admin token binding');
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);
   assert.match(toml, /TENCENT_EKS_CI_DRY_RUN = "true"/);
