@@ -11,10 +11,6 @@ output "environment_runtime" {
   }
 }
 
-output "tcr_repository_url" {
-  value = "${tencentcloud_tcr_instance.scan.public_domain}/${var.tcr_namespace}/${var.tcr_repository}"
-}
-
 output "secret_handling" {
-  value = "Create CAM access keys and TCR robot credentials outside Terraform; store them only in protected GitHub environments and Wrangler secrets."
+  value = "Create CAM access keys outside Terraform and store them only in protected GitHub environments and Wrangler secrets. The public GHCR image requires no registry credential."
 }

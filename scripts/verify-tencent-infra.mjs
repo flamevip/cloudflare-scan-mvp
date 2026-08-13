@@ -12,7 +12,7 @@ const infraWorkflow = text('.github/workflows/tencent-infra.yml');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
 
-for (const resource of ['tencentcloud_vpc', 'tencentcloud_subnet', 'tencentcloud_security_group', 'tencentcloud_security_group_rule_set', 'tencentcloud_tcr_instance', 'tencentcloud_tcr_namespace', 'tencentcloud_tcr_repository', 'tencentcloud_cam_policy', 'tencentcloud_cam_user_policy_attachment']) {
+for (const resource of ['tencentcloud_vpc', 'tencentcloud_subnet', 'tencentcloud_security_group', 'tencentcloud_security_group_rule_set', 'tencentcloud_cam_policy', 'tencentcloud_cam_user_policy_attachment']) {
   assert.match(main, new RegExp(`resource "${resource}"`), `missing ${resource}`);
 }
 assert.match(main, /environments = toset\(\["staging", "pilot"\]\)/);
@@ -21,7 +21,7 @@ assert.ok(main.indexOf('dynamic "egress"') < main.indexOf('Allow public DNS'), '
 for (const sharedEgressResource of ['tencentcloud_eip', 'tencentcloud_nat_gateway', 'tencentcloud_route_table_entry']) {
   assert.doesNotMatch(main, new RegExp(`resource "${sharedEgressResource}"`), `shared egress resource ${sharedEgressResource} must not exist`);
 }
-assert.match(main, /open_public_operation\s+= true/);
+assert.doesNotMatch(main, /tencentcloud_tcr_|open_public_operation/, 'Terraform must not manage TCR');
 for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances']) assert.match(main, new RegExp(action));
 assert.doesNotMatch(main + bootstrap, /tencentcloud_cam_access_key|secret_key|secret_id/i, 'Terraform must not create or store CAM access keys');
 
@@ -50,8 +50,13 @@ assert.match(pilot, /AGENT_SCAN_MODE=real_toolchain/);
 assert.match(pilot, /AGENT_MAX_CANDIDATES=100/);
 assert.match(pilot, /TENCENT_EKS_CI_DRY_RUN=true/);
 assert.match(pilot, /TENCENT_EKS_CI_AUTO_CREATE_EIP=true/);
+for (const envConfig of [staging, pilot]) {
+  assert.match(envConfig, /TENCENT_EKS_CI_IMAGE=ghcr\.io\/flamevip\/cloudflare-scan-mvp-agent@sha256:replace/);
+  assert.match(envConfig, /TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ghcr\.io/);
+  assert.doesNotMatch(envConfig, /TENCENT_TCR_|tencentcloudcr/);
+}
 
-console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], per_run_auto_eip: true, shared_nat: false, ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, shared_tcr: true, ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
+console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], per_run_auto_eip: true, shared_nat: false, ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, tcr_managed: false, image_registry: 'public-ghcr', ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 
 function text(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8');

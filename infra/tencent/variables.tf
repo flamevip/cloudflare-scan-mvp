@@ -32,21 +32,6 @@ variable "cam_user_names" {
   }
 }
 
-variable "tcr_instance_name" {
-  type    = string
-  default = "scan-agent-p1"
-}
-
-variable "tcr_namespace" {
-  type    = string
-  default = "scan-agent"
-}
-
-variable "tcr_repository" {
-  type    = string
-  default = "scan-agent"
-}
-
 variable "tags" {
   type    = map(string)
   default = { system = "cloudflare-scan-mvp", managed_by = "terraform" }

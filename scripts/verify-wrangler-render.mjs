@@ -20,13 +20,12 @@ const baseEnv = {
   TENCENT_EKS_CI_VPC_ID: 'vpc-fixture',
   TENCENT_EKS_CI_SUBNET_ID: 'subnet-fixture',
   TENCENT_EKS_CI_SECURITY_GROUP_IDS: 'sg-fixture',
-  TENCENT_EKS_CI_IMAGE: `registry.example.test/scan-agent/scan-agent@sha256:${'a'.repeat(64)}`,
-  TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: 'registry.example.test',
+  TENCENT_EKS_CI_IMAGE: `ghcr.io/flamevip/cloudflare-scan-mvp-agent@sha256:${'a'.repeat(64)}`,
+  TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: 'ghcr.io',
   TENCENT_EKS_CI_AUTO_CREATE_EIP: 'true',
   TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS: '5',
   TENCENT_EKS_CI_EIP_ISP: 'BGP',
   TENCENT_EKS_CI_DRY_RUN: 'true',
-  TENCENT_TCR_SERVER: 'registry.example.test',
   D1_DATABASE_NAME: 'scan-staging',
   D1_DATABASE_ID: '00000000-0000-0000-0000-000000000001',
   R2_BUCKET_NAME: 'scan-staging-artifacts',
@@ -44,6 +43,7 @@ try {
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);
   assert.match(toml, /TENCENT_EKS_CI_DRY_RUN = "true"/);
   assert.match(toml, /TENCENT_EKS_CI_AUTO_CREATE_EIP = "true"/);
+  assert.doesNotMatch(toml, /TENCENT_TCR_|tencentcloudcr/);
 
   const unpinned = run({ ...baseEnv, TENCENT_EKS_CI_IMAGE: 'registry.example.test/scan-agent:latest' }, resolve(work, 'invalid-image.toml'));
   assert.notEqual(unpinned.status, 0);

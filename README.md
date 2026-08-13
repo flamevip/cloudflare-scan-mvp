@@ -511,8 +511,8 @@ TENCENT_EKS_CI_REGION=ap-chengdu
 TENCENT_EKS_CI_VPC_ID=vpc-...
 TENCENT_EKS_CI_SUBNET_ID=subnet-...
 TENCENT_EKS_CI_SECURITY_GROUP_IDS=sg-...
-TENCENT_EKS_CI_IMAGE=ccr.ccs.tencentyun.com/scan-agent/scan-agent@sha256:<64-hex>
-TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ccr.ccs.tencentyun.com
+TENCENT_EKS_CI_IMAGE=ghcr.io/flamevip/cloudflare-scan-mvp-agent@sha256:<64-hex>
+TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ghcr.io
 TENCENT_EKS_CI_CPU=1
 TENCENT_EKS_CI_MEMORY=2
 TENCENT_EKS_CI_AUTO_CREATE_EIP=true
@@ -525,12 +525,9 @@ TENCENT_EKS_CI_EIP_ISP=BGP
 ```bash
 npx wrangler secret put TENCENT_SECRET_ID
 npx wrangler secret put TENCENT_SECRET_KEY
-# 私有 TCR 需要显式 registry credential 时再设置：
-npx wrangler secret put TENCENT_TCR_USERNAME
-npx wrangler secret put TENCENT_TCR_PASSWORD
 ```
 
-`TENCENT_TCR_SERVER` 是非敏感 registry host，只有 server、username、password 三项全部存在时才会向腾讯请求附加 `ImageRegistryCredentials`。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
+生产试运行使用公开 GHCR 镜像，因此不会向腾讯请求附加 `ImageRegistryCredentials`，也不需要持久化 GitHub registry token。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
 
 腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。
 
