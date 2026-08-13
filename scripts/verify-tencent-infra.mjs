@@ -38,8 +38,12 @@ assert.match(ci, /terraform -chdir=infra\/tencent validate/);
 assert.match(ci, /terraform -chdir=infra\/tencent\/bootstrap validate/);
 assert.doesNotMatch(ci, /terraform[^\n]+ apply/, 'pull-request CI must never apply infrastructure');
 assert.match(infraWorkflow, /environment: tencent-infrastructure/);
-assert.match(infraWorkflow, /options: \[plan, apply\]/);
+assert.match(infraWorkflow, /options: \[plan, apply, forget-retired-tcr-state\]/);
 assert.match(infraWorkflow, /encrypt=true/);
+assert.match(infraWorkflow, /state pull > tencent-state-before-retired-tcr\.json/);
+for (const address of ['tencentcloud_tcr_repository.scan', 'tencentcloud_tcr_namespace.scan', 'tencentcloud_tcr_instance.scan']) assert.match(infraWorkflow, new RegExp(escapeRegExp(`'${address}'`)));
+assert.match(infraWorkflow, /retention-days: 7/);
+assert.match(infraWorkflow, /inputs\.action == 'plan' \|\| inputs\.action == 'apply'/, 'state reconciliation must not run a plan before stale TCR addresses are forgotten');
 
 assert.match(staging, /ENVIRONMENT=staging/);
 assert.match(staging, /TOKEN_SCOPE_ENFORCEMENT=report/);
