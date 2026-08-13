@@ -64,6 +64,7 @@ assert.match(stagingAcceptanceScript, /timeout_minutes: 5/);
 assert.match(stagingAcceptanceScript, /provider_egress_ip/);
 assert.match(stagingAcceptanceScript, /AbortSignal\.timeout\(20_000\)/);
 assert.match(stagingAcceptanceScript, /live acceptance was consumed by a dry-run Queue version/);
+assert.match(stagingAcceptanceScript, /assert\.equal\(instanceCount, 0[\s\S]*verifyConsumerCanary\(true\)/, 'dry-run verification must confirm the guarded Queue consumer version');
 assert.doesNotMatch(stagingAcceptanceScript, /const preflight = await preflight\(\)/, 'preflight verification must not shadow its own function');
 
 assert.match(staging, /ENVIRONMENT=staging/);
