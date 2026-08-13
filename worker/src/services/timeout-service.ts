@@ -4,6 +4,7 @@ import { newId, nowIso } from '../ids';
 import { decideRetry, decideTimeout, parseHeartbeatTimeoutSeconds } from './retry-policy';
 import { markRetrying, markTimedOut } from './state-machine';
 import { cleanupProviderRun } from './provider-cleanup-service';
+import { isTencentEksCiDryRun } from './tencent-eks-ci-service';
 
 interface StaleRunRow {
   agent_run_id: string;
@@ -79,6 +80,9 @@ export async function sweepTimedOutAgentRuns(env: Env): Promise<SweepTimeoutsRes
         targets_r2_key: row.targets_r2_key,
         attempt: retry.next_attempt,
         created_at: nowIso(),
+        required_provider_mode: row.provider === 'tencent_eks_ci'
+          ? (isTencentEksCiDryRun(env.TENCENT_EKS_CI_DRY_RUN) ? 'dry_run' : 'live')
+          : undefined,
       };
       await env.SCAN_DISPATCH.send(retryMessage);
       await auditTimeout(env, row.task_id, row.project_id, 'timeout.retry', { attempt, max_retry: row.max_retry, next_attempt: retry.next_attempt, message });

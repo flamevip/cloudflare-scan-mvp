@@ -35,6 +35,8 @@ const timeoutService = source('worker/src/services/timeout-service.ts');
 const ingestService = source('worker/src/services/ingest-service.ts');
 const agentRoute = source('worker/src/routes/agent.ts');
 const adminService = source('worker/src/services/admin-service.ts');
+const indexSource = source('worker/src/index.ts');
+const queueTypes = source('worker/src/types/queue.ts');
 
 assert.match(consumer, /UPDATE tasks SET status = 'provisioning', dispatch_claim = \?/);
 assert.match(consumer, /NOT EXISTS \([\s\S]*task_shards[\s\S]*status IN \('provisioning', 'running'\)/);
@@ -54,6 +56,10 @@ assert.match(ingestService, /ingest\.orphan_cleanup\.failed/);
 assert.match(agentRoute, /agent run became terminal before completion/);
 assert.match(adminService, /rotation_claim = \?/);
 assert.match(adminService, /token was rotated or revoked concurrently/);
+assert.match(consumer, /QueueProviderModeMismatchError/);
+assert.match(consumer, /message\.required_provider_mode !== actual/);
+assert.match(indexSource, /message\.retry\(\{ delaySeconds: 5 \}\)/);
+assert.match(queueTypes, /type: 'deployment\.canary'/);
 
 console.log(JSON.stringify({ ok: true, terminal_compare_and_set: true, duplicate_dispatch_claim: true, cancel_race_guard: true, total_deadline: true, late_provider_launch_cleanup: true, late_ingest_guard: true, token_rotation_claim: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 
