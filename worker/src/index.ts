@@ -16,6 +16,7 @@ import { processDispatchMessage } from './queue/consumer';
 import { sweepTimedOutAgentRuns } from './services/timeout-service';
 import { sweepProviderCleanup } from './services/provider-cleanup-service';
 import { sweepRetention } from './services/retention-service';
+import { sweepProviderDiagnostics } from './services/provider-diagnostics-service';
 
 export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
@@ -76,9 +77,10 @@ export default {
       console.log(JSON.stringify({ event: 'scheduled.retention', ...retention }));
       return;
     }
+    const diagnostics = await sweepProviderDiagnostics(env);
     const timeouts = await sweepTimedOutAgentRuns(env);
     const cleanup = await sweepProviderCleanup(env);
-    console.log(JSON.stringify({ event: 'scheduled.convergence', timeouts, cleanup }));
+    console.log(JSON.stringify({ event: 'scheduled.convergence', diagnostics, timeouts, cleanup }));
   },
 };
 

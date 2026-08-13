@@ -22,7 +22,8 @@ for (const sharedEgressResource of ['tencentcloud_eip', 'tencentcloud_nat_gatewa
   assert.doesNotMatch(main, new RegExp(`resource "${sharedEgressResource}"`), `shared egress resource ${sharedEgressResource} must not exist`);
 }
 assert.doesNotMatch(main, /tencentcloud_tcr_|open_public_operation/, 'Terraform must not manage TCR');
-for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances']) assert.match(main, new RegExp(action));
+for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstanceEvent', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances']) assert.match(main, new RegExp(action));
+for (const workflow of [ci, text('.github/workflows/build-agent.yml')]) assert.match(workflow, /platforms: linux\/amd64/, 'agent image builds must target the Tencent EKS CI CPU architecture explicitly');
 assert.doesNotMatch(main + bootstrap, /tencentcloud_cam_access_key|secret_key|secret_id/i, 'Terraform must not create or store CAM access keys');
 
 assert.match(bootstrap, /resource "tencentcloud_cos_bucket"/);

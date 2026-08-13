@@ -41,6 +41,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: agent/real
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.uri }}
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0

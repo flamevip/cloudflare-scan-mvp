@@ -2,6 +2,7 @@ import type { Env } from '../env';
 import { newId, nowIso } from '../ids';
 import { deleteAgentProviderJob, type ExternalAgentProvider } from './agent-provider';
 import { serializeProviderError, toProviderLaunchError } from './provider-errors';
+import { collectProviderDiagnostics } from './provider-diagnostics-service';
 
 const MAX_CLEANUP_ATTEMPTS = 5;
 const CLEANUP_BATCH_SIZE = 20;
@@ -32,6 +33,19 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
   if (!run.provider_job_id || run.provider_job_id.startsWith('dry-run:')) {
     await markCleanupCompleted(env, run.id, run.task_id);
     return { attempted: false, completed: true, already_absent: true, error: null };
+  }
+  // Capture the last available startup/runtime state before deletion. A
+  // diagnostics failure is deliberately non-blocking so cleanup still wins.
+  const diagnostics = await collectProviderDiagnostics(env, run);
+  if (diagnostics.errors.length) {
+    console.warn(JSON.stringify({
+      event: 'provider.cleanup.diagnostics_partial',
+      task_id: run.task_id,
+      agent_run_id: run.id,
+      provider: run.provider,
+      provider_job_id: run.provider_job_id,
+      errors: diagnostics.errors,
+    }));
   }
   try {
     const result = await deleteAgentProviderJob(env, run.provider as ExternalAgentProvider, run.provider_job_id);

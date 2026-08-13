@@ -46,7 +46,30 @@ const consumer = loadTsModule('worker/src/queue/consumer.ts', {
   '../services/provider-errors': providerErrors,
   '../services/provider-cleanup-service': { cleanupProviderRun: async () => ({ attempted: true, completed: true, already_absent: false, error: null }) },
 });
+let diagnosticsMode = 'success';
+const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnostics-service.ts', {
+  '../ids': { nowIso: () => '2026-06-15T00:00:00.000Z' },
+  './tencent-eks-ci-service': {
+    describeTencentEksContainerInstances: async () => {
+      if (diagnosticsMode === 'describe-failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'describe timed out');
+      return {
+        total_count: 1,
+        instances: [{
+          EksCiId: 'eksci-diagnostics',
+          Status: 'Pending',
+          Containers: [{ CurrentState: { State: 'Waiting', Reason: 'ImagePullBackOff', Message: 'callback_token=fixture-secret Authorization=Bearer fixture-bearer', ExitCode: 1 } }],
+        }],
+      };
+    },
+    describeTencentEksContainerInstanceEvents: async () => {
+      if (diagnosticsMode === 'event-failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'event timed out');
+      return { events: [{ PodName: 'scan-agent', Reason: 'Failed', Type: 'Warning', Count: 2, FirstTimestamp: '2026-06-15T00:00:00Z', LastTimestamp: '2026-06-15T00:01:00Z', Message: 'pull failed token=fixture-event-secret' }] };
+    },
+  },
+  './provider-errors': providerErrors,
+});
 let cleanupMode = 'success';
+let cleanupDiagnosticsMode = 'success';
 const cleanupService = loadTsModule('worker/src/services/provider-cleanup-service.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
   './agent-provider': {
@@ -56,6 +79,11 @@ const cleanupService = loadTsModule('worker/src/services/provider-cleanup-servic
     },
   },
   './provider-errors': providerErrors,
+  './provider-diagnostics-service': {
+    collectProviderDiagnostics: async () => cleanupDiagnosticsMode === 'failure'
+      ? { attempted: true, persisted: false, partial: false, errors: ['diagnostics unavailable'] }
+      : { attempted: true, persisted: true, partial: false, errors: [] },
+  },
 });
 
 const missingConfig = providerErrors.providerConfigMissing('gcp_cloud_run', 'GCP_PROJECT_ID');
@@ -266,6 +294,23 @@ assert.deepEqual(deletePayload, { EksCiIds: ['eksci-fixture'], ReleaseAutoCreate
 assert.equal(confirmedDelete.deleted, true);
 assert.equal(confirmedDelete.already_absent, false);
 
+const eventActions = [];
+let eventPayload;
+const eventTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+}, {
+  fetch: async (_url, init) => {
+    eventActions.push(new Headers(init.headers).get('X-TC-Action'));
+    eventPayload = JSON.parse(init.body);
+    return jsonResponse({ Response: { RequestId: 'req-events', Events: [{ Reason: 'Failed', Message: 'fixture event' }] } });
+  },
+});
+const describedEvents = await eventTencentService.describeTencentEksContainerInstanceEvents(tencentLiveEnv, 'eksci-fixture', 500);
+assert.deepEqual(eventActions, ['DescribeEKSContainerInstanceEvent']);
+assert.deepEqual(eventPayload, { EksCiId: 'eksci-fixture', Limit: 100 });
+assert.equal(describedEvents.events[0].Reason, 'Failed');
+
 const duplicateDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
@@ -347,10 +392,39 @@ const cleanupEnv = {
     }),
   },
 };
+const diagnosticsWrites = [];
+const diagnosticsEnv = {
+  DB: {
+    prepare: (sql) => ({
+      bind: (...values) => ({
+        run: async () => { diagnosticsWrites.push({ sql, values }); return { meta: { changes: 1 } }; },
+      }),
+    }),
+  },
+};
+diagnosticsMode = 'success';
+const diagnosticsSuccess = await providerDiagnostics.collectProviderDiagnostics(diagnosticsEnv, { id: 'run_diagnostics', task_id: 'task_diagnostics', provider: 'tencent_eks_ci', provider_job_id: 'eksci-diagnostics' });
+assert.equal(diagnosticsSuccess.persisted, true);
+assert.equal(diagnosticsSuccess.partial, false);
+assert.equal(diagnosticsWrites.length, 1);
+assert.equal(diagnosticsWrites[0].values[0], 'Pending');
+assert.equal(diagnosticsWrites[0].values[1], 'Waiting');
+assert.equal(diagnosticsWrites[0].values[2], 'ImagePullBackOff');
+assert.doesNotMatch(JSON.stringify(diagnosticsWrites[0].values), /fixture-secret|fixture-bearer|fixture-event-secret/);
+assert.match(JSON.stringify(diagnosticsWrites[0].values), /\[redacted\]/);
+diagnosticsMode = 'event-failure';
+const partialDiagnostics = await providerDiagnostics.collectProviderDiagnostics(diagnosticsEnv, { id: 'run_diagnostics', task_id: 'task_diagnostics', provider: 'tencent_eks_ci', provider_job_id: 'eksci-diagnostics' });
+assert.equal(partialDiagnostics.persisted, true);
+assert.equal(partialDiagnostics.partial, true);
+assert.equal(await providerDiagnostics.collectProviderDiagnostics(diagnosticsEnv, { id: 'run_dry_diagnostics', task_id: 'task_diagnostics', provider: 'tencent_eks_ci', provider_job_id: 'dry-run:tencent-eks-ci/test' }).then((result) => result.attempted), false);
 cleanupMode = 'success';
 const cleanupSuccess = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-fixture', provider_cleanup_attempts: 0 });
 assert.equal(cleanupSuccess.completed, true);
 assert.ok(cleanupWrites.some((write) => write.sql.includes('provider_cleanup_completed_at')));
+cleanupDiagnosticsMode = 'failure';
+const cleanupAfterDiagnosticsFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_diagnostics_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-diagnostics-failure', provider_cleanup_attempts: 0 });
+assert.equal(cleanupAfterDiagnosticsFailure.completed, true, 'diagnostics failure must not block provider deletion');
+cleanupDiagnosticsMode = 'success';
 cleanupMode = 'failure';
 const cleanupFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-failure', provider_cleanup_attempts: 0 });
 assert.equal(cleanupFailure.completed, false);
@@ -394,6 +468,8 @@ console.log(JSON.stringify({
     duplicate_delete_is_idempotent: true,
     create_timeout_reconciled_by_name: reconciledLaunch.provider_job_id,
     cleanup_failure_recorded_for_retry: cleanupFailure.completed === false,
+    startup_diagnostics_persisted: diagnosticsSuccess.persisted,
+    event_failure_is_non_blocking: partialDiagnostics.partial && cleanupAfterDiagnosticsFailure.completed,
   },
   network: 'not used',
   cloud_credentials: 'not used',

@@ -71,6 +71,7 @@ resource "tencentcloud_cam_policy" "eks_ci_runner" {
       effect = "allow"
       action = [
         "tke:CreateEKSContainerInstances",
+        "tke:DescribeEKSContainerInstanceEvent",
         "tke:DescribeEKSContainerInstances",
         "tke:DeleteEKSContainerInstances"
       ]

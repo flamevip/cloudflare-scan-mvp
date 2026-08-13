@@ -22,7 +22,7 @@ required_tables = {
     'projects': ['id', 'name', 'owner_id', 'scope_json', 'artifact_retention_days', 'metadata_retention_days', 'audit_retention_days'],
     'tasks': ['id', 'project_id', 'created_by', 'max_cost_usd', 'deadletter_reason', 'cancelled_at', 'cancelled_by', 'dispatch_claim'],
     'task_shards': ['id', 'task_id', 'retry_count', 'deadletter_reason'],
-    'agent_runs': ['id', 'task_id', 'callback_token', 'last_heartbeat_at', 'timeout_at', 'retryable', 'provider_cleanup_attempts', 'provider_cleanup_last_error', 'provider_cleanup_completed_at', 'provider_egress_ip', 'provider_eip_id'],
+    'agent_runs': ['id', 'task_id', 'callback_token', 'last_heartbeat_at', 'timeout_at', 'retryable', 'provider_cleanup_attempts', 'provider_cleanup_last_error', 'provider_cleanup_completed_at', 'provider_egress_ip', 'provider_eip_id', 'provider_status', 'provider_container_state', 'provider_status_reason', 'provider_status_message', 'provider_exit_code', 'provider_events_json', 'provider_diagnostics_updated_at'],
     'project_memberships': ['id', 'project_id', 'user_id', 'role', 'status', 'created_at', 'updated_at'],
     'api_tokens': ['id', 'user_id', 'token_hash', 'name', 'scopes_json', 'expires_at', 'revoked_at', 'last_used_at', 'rotated_from_token_id', 'rotation_claim', 'created_at', 'updated_at'],
     'audit_logs': ['id', 'actor', 'action', 'entity_type', 'entity_id', 'project_id', 'metadata_json', 'created_at'],
@@ -36,6 +36,7 @@ required_indexes = {
     'idx_api_tokens_active_user',
     'idx_agent_runs_provider_cleanup',
     'idx_agent_runs_provider_egress_ip',
+    'idx_agent_runs_provider_diagnostics',
     'idx_users_status_created_at',
     'idx_api_tokens_state_created_at',
     'idx_api_tokens_rotated_from',
@@ -216,6 +217,7 @@ assert.ok(report.migrations.includes('0007_provider_cleanup.sql'));
 assert.ok(report.migrations.includes('0008_p1_pilot.sql'));
 assert.ok(report.migrations.includes('0009_p1_lifecycle_guards.sql'));
 assert.ok(report.migrations.includes('0010_provider_egress.sql'));
+assert.ok(report.migrations.includes('0011_provider_diagnostics.sql'));
 assert.ok(report.fresh_db.tables.includes('project_memberships'));
 assert.ok(report.fresh_db.tables.includes('api_tokens'));
 assert.deepEqual(report.fresh_db.admin_membership, { role: 'owner', status: 'active' });

@@ -70,6 +70,11 @@ assert.doesNotMatch(agentSource, /'-follow-redirects'/, 'httpx must not follow u
 assert.match(agentSource, /redirect: 'manual'/, 'built-in HTTP probe must not automatically follow redirects');
 assert.match(agentSource, /MAX_CANDIDATES: clampNumber\([^\n]+500, 1, 500\)/, 'candidate cap must be hard-bounded at 500');
 assert.match(agentSource, /'-disable-unsigned-templates'/, 'Nuclei must reject unsigned templates');
+assert.ok(
+  agentSource.indexOf("await heartbeat.send({ phase: 'starting' })") < agentSource.indexOf("getJson(env, '/api/agent/config')"),
+  'the first heartbeat must be sent before input downloads so startup can be distinguished from callback/download failure',
+);
+assert.match(agentSource, /if \(!waitForSlot\) return;/, 'periodic heartbeats must be skipped instead of overlapping');
 assert.match(agentSource, /custom Nuclei template paths are disabled/, 'runtime template-path overrides must be rejected');
 assert.match(agentSource, /'subfinder', \['-silent', '-all', '-rl', String\(env\.RATE_LIMIT\)/, 'subfinder must honor the task rate limit');
 assert.match(agentSource, /'-follow-host-redirects',[\s\S]*'-rate-limit', String\(env\.RATE_LIMIT\)/, 'httpx must honor the task rate limit');
@@ -87,5 +92,6 @@ console.log(JSON.stringify({
   rejected_scope_examples: ['https://evil.com/', 'not a host'],
   denied_ip_examples: ['127.0.0.1', '10.0.0.1', '169.254.169.254', 'fd00::1'],
   redirect_policy: 'manual fetch and same-host-only httpx',
+  startup_heartbeat_before_download: true,
   network: 'not used',
 }, null, 2));

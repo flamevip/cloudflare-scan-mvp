@@ -19,6 +19,14 @@ interface TencentContainer {
   Name: string;
   Image: string;
   EnvironmentVars: TencentEnvironmentVariable[];
+  CurrentState?: TencentContainerState;
+}
+
+export interface TencentContainerState {
+  State?: string;
+  Reason?: string;
+  Message?: string;
+  ExitCode?: number;
 }
 
 interface TencentImageRegistryCredential {
@@ -47,12 +55,23 @@ export interface TencentCreateEksCiRequest {
   ImageRegistryCredentials?: TencentImageRegistryCredential[];
 }
 
-interface TencentEksCi {
+export interface TencentEksCi {
   AutoCreatedEipId?: string;
   EipAddress?: string;
   EksCiId?: string;
   EksCiName?: string;
   Status?: string;
+  Containers?: TencentContainer[];
+}
+
+export interface TencentEksCiEvent {
+  PodName?: string;
+  Reason?: string;
+  Type?: string;
+  Count?: number;
+  FirstTimestamp?: string;
+  LastTimestamp?: string;
+  Message?: string;
 }
 
 interface TencentResponseBody {
@@ -64,6 +83,7 @@ interface TencentResponseBody {
     RequestId?: string;
     EksCiIds?: string[];
     EksCis?: TencentEksCi[];
+    Events?: TencentEksCiEvent[];
     TotalCount?: number;
   };
 }
@@ -200,6 +220,25 @@ export async function describeTencentEksContainerInstances(
     request_id: response.Response?.RequestId ?? null,
     total_count: response.Response?.TotalCount ?? 0,
     instances: response.Response?.EksCis ?? [],
+  };
+}
+
+export async function describeTencentEksContainerInstanceEvents(
+  env: Env,
+  eksCiId: string,
+  limit = 20,
+): Promise<{ request_id: string | null; events: TencentEksCiEvent[] }> {
+  if (!/^eksci-[A-Za-z0-9-]+$/.test(eksCiId)) throw configValidationError('EksCiId must be a valid eksci-* identifier');
+  const region = required(env.TENCENT_EKS_CI_REGION, 'TENCENT_EKS_CI_REGION');
+  const secretId = required(env.TENCENT_SECRET_ID, 'TENCENT_SECRET_ID');
+  const secretKey = required(env.TENCENT_SECRET_KEY, 'TENCENT_SECRET_KEY');
+  const response = await callTencentTkeApi(env, 'DescribeEKSContainerInstanceEvent', {
+    EksCiId: eksCiId,
+    Limit: Math.max(1, Math.min(100, Math.floor(limit))),
+  }, region, secretId, secretKey);
+  return {
+    request_id: response.Response?.RequestId ?? null,
+    events: response.Response?.Events ?? [],
   };
 }
 
