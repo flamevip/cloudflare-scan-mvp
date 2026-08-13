@@ -16,7 +16,7 @@ import {
 
 export async function handleAdmin(request: Request, env: Env, url: URL, path: string): Promise<Response | null> {
   if (!path.startsWith('/api/admin/')) return null;
-  if (path.startsWith('/api/admin/maintenance/') || path === '/api/admin/providers/preflight' || path === '/api/admin/search/status') return null;
+  if (path.startsWith('/api/admin/maintenance/') || path.startsWith('/api/admin/providers/') || path === '/api/admin/search/status') return null;
   const context = await requireAdminContext(request, env);
 
   if (path === '/api/admin/users') {

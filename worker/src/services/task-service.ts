@@ -24,6 +24,7 @@ import { processDispatchMessage } from '../queue/consumer';
 import { resolveEffectiveAgentProvider } from './agent-provider';
 import { cleanupProviderRun } from './provider-cleanup-service';
 import { writeAudit } from './audit-service';
+import { isTencentEksCiDryRun } from './tencent-eks-ci-service';
 
 interface TaskProjectRow {
   id: string;
@@ -84,7 +85,18 @@ export async function createTask(env: Env, context: AuthContext, body: CreateTas
   await putText(env, tgtKey, `${targets.join('\n')}\n`);
   if (targetUrls.length) await putText(env, targetCandidatesKey(taskId), `${targetUrls.join('\n')}\n`);
 
-  const message: ScanDispatchMessage = { type: 'task.created', task_id: taskId, project_id: projectId, config_r2_key: cfgKey, targets_r2_key: tgtKey, attempt: 1, created_at: now };
+  const message: ScanDispatchMessage = {
+    type: 'task.created',
+    task_id: taskId,
+    project_id: projectId,
+    config_r2_key: cfgKey,
+    targets_r2_key: tgtKey,
+    attempt: 1,
+    created_at: now,
+    ...(resolveEffectiveAgentProvider(env) === 'tencent_eks_ci'
+      ? { required_provider_mode: isTencentEksCiDryRun(env.TENCENT_EKS_CI_DRY_RUN) ? 'dry_run' as const : 'live' as const }
+      : {}),
+  };
   await env.SCAN_DISPATCH.send(message);
   await writeAudit(env, { actor: context.actor_id, action: 'task.create', entity_type: 'task', entity_id: taskId, project_id: projectId, metadata: { targets, target_url_count: targetUrls.length, modules, max_cost_usd: maxCostUsd } });
 

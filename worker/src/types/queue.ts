@@ -1,4 +1,4 @@
-export interface ScanDispatchMessage {
+export interface TaskCreatedMessage {
   type: 'task.created';
   task_id: string;
   project_id: string;
@@ -6,4 +6,13 @@ export interface ScanDispatchMessage {
   targets_r2_key: string;
   attempt: number;
   created_at: string;
+  required_provider_mode?: 'dry_run' | 'live';
 }
+
+export interface DeploymentCanaryMessage {
+  type: 'deployment.canary';
+  nonce: string;
+  created_at: string;
+}
+
+export type ScanDispatchMessage = TaskCreatedMessage | DeploymentCanaryMessage;
