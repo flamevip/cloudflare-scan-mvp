@@ -10,7 +10,9 @@ const bootstrap = [text('infra/tencent/bootstrap/main.tf'), text('infra/tencent/
 const ci = text('.github/workflows/ci.yml');
 const infraWorkflow = text('.github/workflows/tencent-infra.yml');
 const stagingAcceptanceWorkflow = text('.github/workflows/staging-mock-acceptance.yml');
+const stagingRegistryDiagnosticWorkflow = text('.github/workflows/staging-registry-connectivity.yml');
 const stagingAcceptanceScript = text('scripts/run-staging-mock-acceptance.mjs');
+const stagingRegistryDiagnosticScript = text('scripts/assert-staging-registry-connectivity.mjs');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
 
@@ -68,6 +70,17 @@ assert.match(stagingAcceptanceScript, /await waitForProviderMode\(false\)[\s\S]*
 assert.match(stagingAcceptanceScript, /await waitForProviderMode\(true\)[\s\S]*verifyConsumerCanary\(true\)/, 'rollback verification must wait for both HTTP and Queue propagation');
 assert.match(stagingAcceptanceScript, /assert\.equal\(instanceCount, 0[\s\S]*verifyConsumerCanary\(true\)/, 'dry-run verification must confirm the guarded Queue consumer version');
 assert.doesNotMatch(stagingAcceptanceScript, /const preflight = await preflight\(\)/, 'preflight verification must not shadow its own function');
+assert.match(stagingRegistryDiagnosticWorkflow, /environment: staging/);
+assert.match(stagingRegistryDiagnosticWorkflow, /group: staging-live-provider/);
+assert.match(stagingRegistryDiagnosticWorkflow, /registry\.cn-hangzhou\.aliyuncs\.com\/google_containers\/pause@sha256:8d4106c88ec0bd28001e34c975d65175d994072d65341f62a8ab0754b0fafe10/);
+assert.match(stagingRegistryDiagnosticWorkflow, /continue-on-error: true[\s\S]*ACCEPTANCE_MAX_WAIT_MS: "120000"/);
+assert.match(stagingRegistryDiagnosticWorkflow, /name: Restore staging dry-run Worker[\s\S]*if: always\(\)/);
+assert.match(stagingRegistryDiagnosticWorkflow, /name: Verify rollback and Tencent cleanup[\s\S]*if: always\(\)/);
+assert.match(stagingRegistryDiagnosticWorkflow, /node scripts\/assert-staging-registry-connectivity\.mjs/);
+assert.match(stagingRegistryDiagnosticScript, /ErrImagePull\|ImagePullBackOff\|Failed to pull\|DeadlineExceeded/);
+assert.match(stagingRegistryDiagnosticScript, /diagnostics\.status, 'Running'/);
+assert.match(stagingRegistryDiagnosticScript, /report\.cleanup_completed, true/);
+assert.match(stagingRegistryDiagnosticScript, /tencent_instance_count_after/);
 
 assert.match(staging, /ENVIRONMENT=staging/);
 assert.match(staging, /TOKEN_SCOPE_ENFORCEMENT=report/);
