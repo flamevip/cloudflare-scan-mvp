@@ -68,6 +68,7 @@ jobs:
           DEADLETTER_QUEUE_NAME: ${{ vars.DEADLETTER_QUEUE_NAME }}
         run: |
           node scripts/render-wrangler-config.mjs config/wrangler.tencent.template.toml work/wrangler.staging.toml
+          node --input-type=module -e "import fs from 'node:fs';const p='work/wrangler.staging.toml';const lines=fs.readFileSync(p,'utf8').split(/\r?\n/);const routes=lines.filter(line=>line.startsWith('routes = ')&&line.includes('custom_domain = true'));if(routes.length!==1)throw new Error('expected exactly one managed custom-domain route');fs.writeFileSync(p,lines.filter(line=>line!==routes[0]).join('\n'))"
           node --input-type=module -e "import fs from 'node:fs';const p='work/wrangler.staging.toml';let s=fs.readFileSync(p,'utf8');for(const [from,to] of [['TENCENT_EKS_CI_DRY_RUN = \"true\"','TENCENT_EKS_CI_DRY_RUN = \"false\"'],['TASK_MAX_RETRY = \"1\"','TASK_MAX_RETRY = \"0\"']]){if(s.split(from).length!==2)throw new Error('expected exactly one '+from);s=s.replace(from,to)}fs.writeFileSync('work/wrangler.staging.live.toml',s)"
       - name: Refresh staging dry-run Worker
         run: |
