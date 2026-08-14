@@ -74,6 +74,7 @@ assert.equal(consumerAudits.at(-1)?.metadata?.tencent_dry_run_enabled, true);
 let diagnosticsMode = 'success';
 const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnostics-service.ts', {
   '../ids': { nowIso: () => '2026-06-15T00:00:00.000Z' },
+  './provider-egress-service': providerEgressService,
   './tencent-eks-ci-service': {
     describeTencentEksContainerInstances: async () => {
       if (diagnosticsMode === 'describe-failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'describe timed out');
@@ -81,6 +82,8 @@ const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnosti
         total_count: 1,
         instances: [{
           EksCiId: 'eksci-diagnostics',
+          AutoCreatedEipId: 'eip-diagnostics',
+          EipAddress: '43.136.10.21',
           Status: 'Pending',
           Containers: [{ CurrentState: { State: 'Waiting', Reason: 'ImagePullBackOff', Message: 'callback_token=fixture-secret Authorization=Bearer fixture-bearer', ExitCode: 1 } }],
         }],
@@ -434,9 +437,13 @@ const diagnosticsSuccess = await providerDiagnostics.collectProviderDiagnostics(
 assert.equal(diagnosticsSuccess.persisted, true);
 assert.equal(diagnosticsSuccess.partial, false);
 assert.equal(diagnosticsWrites.length, 1);
-assert.equal(diagnosticsWrites[0].values[0], 'Pending');
-assert.equal(diagnosticsWrites[0].values[1], 'Waiting');
-assert.equal(diagnosticsWrites[0].values[2], 'ImagePullBackOff');
+assert.match(diagnosticsWrites[0].sql, /provider_eip_id = COALESCE\(provider_eip_id, \?\)/);
+assert.match(diagnosticsWrites[0].sql, /provider_egress_ip = COALESCE\(provider_egress_ip, \?\)/);
+assert.equal(diagnosticsWrites[0].values[0], 'eip-diagnostics');
+assert.equal(diagnosticsWrites[0].values[1], '43.136.10.21');
+assert.equal(diagnosticsWrites[0].values[2], 'Pending');
+assert.equal(diagnosticsWrites[0].values[3], 'Waiting');
+assert.equal(diagnosticsWrites[0].values[4], 'ImagePullBackOff');
 assert.doesNotMatch(JSON.stringify(diagnosticsWrites[0].values), /fixture-secret|fixture-bearer|fixture-event-secret/);
 assert.match(JSON.stringify(diagnosticsWrites[0].values), /\[redacted\]/);
 diagnosticsMode = 'event-failure';
