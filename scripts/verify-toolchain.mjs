@@ -29,6 +29,8 @@ assert.match(buildWorkflow, /steps\.build\.outputs\.digest/);
 assert.match(buildWorkflow, /image_tag must be a lowercase OCI-safe label/);
 assert.match(buildWorkflow, /\$\{GITHUB_SHA:0:12\}/);
 assert.match(buildWorkflow, /docker\/build-push-action@[a-f0-9]{40}/);
+assert.match(buildWorkflow, /provenance: false/);
+assert.match(buildWorkflow, /sbom: false/);
 assert.match(buildWorkflow, /environment: agent-image-publish/);
 assert.match(buildWorkflow, /registry-intl\.cn-chengdu\.aliyuncs\.com\/70v2ray\/scan-agent-cloud/);
 assert.match(buildWorkflow, /username: \$\{\{ secrets\.ALIYUN_ACR_USERNAME \}\}/);
