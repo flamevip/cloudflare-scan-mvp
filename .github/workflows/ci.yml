@@ -25,6 +25,7 @@ jobs:
       - run: npm run verify:p1:e2e
       - run: npm run verify:web
       - run: node --check agent/real/src/scan-agent.js
+      - run: node --check scripts/run-staging-negative-acceptance.mjs
       - run: npx wrangler deploy --dry-run --config wrangler.toml
 
   terraform:
