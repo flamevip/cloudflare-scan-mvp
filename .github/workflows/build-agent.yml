@@ -45,6 +45,8 @@ jobs:
         with:
           context: agent/real
           platforms: linux/amd64
+          provenance: false
+          sbom: false
           push: true
           tags: ${{ steps.image.outputs.tag_uri }}
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
