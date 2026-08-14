@@ -44,6 +44,7 @@ jobs:
       - name: Render staging dry-run configuration
         env:
           WORKER_NAME: ${{ vars.WORKER_NAME }}
+          WORKER_CUSTOM_DOMAIN: ${{ vars.WORKER_CUSTOM_DOMAIN }}
           ENVIRONMENT: staging
           TOKEN_SCOPE_ENFORCEMENT: report
           CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
