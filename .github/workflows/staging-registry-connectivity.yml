@@ -1,0 +1,127 @@
+name: staging-domestic-registry-connectivity
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval_reference:
+        description: Explicit approval reference for one real staging registry diagnostic instance
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-live-provider
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    env:
+      STAGING_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+      STAGING_ADMIN_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DIAGNOSTIC_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+      DIAGNOSTIC_IMAGE: registry.cn-hangzhou.aliyuncs.com/google_containers/pause@sha256:8d4106c88ec0bd28001e34c975d65175d994072d65341f62a8ab0754b0fafe10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Validate explicit approval reference
+        env:
+          APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+        run: test -n "$APPROVAL_REFERENCE"
+      - name: Verify immutable domestic diagnostic image
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          const expected = process.env.DIAGNOSTIC_IMAGE.split('@')[1];
+          const tokenUrl = 'https://dockerauth.cn-hangzhou.aliyuncs.com/auth?service=registry.aliyuncs.com%3Acn-hangzhou%3A26842&scope=repository%3Agoogle_containers%2Fpause%3Apull';
+          const tokenResponse = await fetch(tokenUrl, { signal: AbortSignal.timeout(20_000) });
+          assert.equal(tokenResponse.ok, true, `anonymous registry token failed: ${tokenResponse.status}`);
+          const { token } = await tokenResponse.json();
+          const manifest = await fetch(`https://${process.env.DIAGNOSTIC_REGISTRY}/v2/google_containers/pause/manifests/${expected}`, {
+            method: 'HEAD',
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.docker.distribution.manifest.v2+json' },
+            signal: AbortSignal.timeout(20_000),
+          });
+          assert.equal(manifest.ok, true, `diagnostic manifest lookup failed: ${manifest.status}`);
+          assert.equal(manifest.headers.get('docker-content-digest'), expected);
+          EOF
+      - name: Render normal and diagnostic staging configurations
+        env:
+          WORKER_NAME: ${{ vars.WORKER_NAME }}
+          ENVIRONMENT: staging
+          TOKEN_SCOPE_ENFORCEMENT: report
+          CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+          AGENT_SCAN_MODE: mock
+          AGENT_MAX_CANDIDATES: "100"
+          TENCENT_EKS_CI_REGION: ${{ vars.TENCENT_EKS_CI_REGION }}
+          TENCENT_EKS_CI_VPC_ID: ${{ vars.TENCENT_EKS_CI_VPC_ID }}
+          TENCENT_EKS_CI_SUBNET_ID: ${{ vars.TENCENT_EKS_CI_SUBNET_ID }}
+          TENCENT_EKS_CI_SECURITY_GROUP_IDS: ${{ vars.TENCENT_EKS_CI_SECURITY_GROUP_IDS }}
+          TENCENT_EKS_CI_IMAGE: ${{ vars.TENCENT_EKS_CI_IMAGE }}
+          TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: ${{ vars.TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST }}
+          TENCENT_EKS_CI_AUTO_CREATE_EIP: "true"
+          TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS: ${{ vars.TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS || '5' }}
+          TENCENT_EKS_CI_EIP_ISP: ${{ vars.TENCENT_EKS_CI_EIP_ISP || 'BGP' }}
+          TENCENT_EKS_CI_DRY_RUN: "true"
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          AI_SEARCH_INSTANCE_NAME: ${{ vars.AI_SEARCH_INSTANCE_NAME }}
+          SCAN_QUEUE_NAME: ${{ vars.SCAN_QUEUE_NAME }}
+          DEADLETTER_QUEUE_NAME: ${{ vars.DEADLETTER_QUEUE_NAME }}
+        run: |
+          node scripts/render-wrangler-config.mjs config/wrangler.tencent.template.toml work/wrangler.staging.toml
+          TENCENT_EKS_CI_IMAGE="$DIAGNOSTIC_IMAGE" TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST="$DIAGNOSTIC_REGISTRY" node scripts/render-wrangler-config.mjs config/wrangler.tencent.template.toml work/wrangler.staging.diagnostic.toml
+          node --input-type=module -e "import fs from 'node:fs';const p='work/wrangler.staging.diagnostic.toml';let s=fs.readFileSync(p,'utf8');for(const [from,to] of [['TENCENT_EKS_CI_DRY_RUN = \"true\"','TENCENT_EKS_CI_DRY_RUN = \"false\"'],['TASK_MAX_RETRY = \"1\"','TASK_MAX_RETRY = \"0\"']]){if(s.split(from).length!==2)throw new Error('expected exactly one '+from);s=s.replace(from,to)}fs.writeFileSync(p,s)"
+      - name: Refresh staging dry-run Worker
+        run: |
+          npx wrangler deploy --dry-run --config work/wrangler.staging.toml
+          npx wrangler deploy --config work/wrangler.staging.toml
+      - name: Verify zero-instance precondition
+        run: node scripts/run-staging-mock-acceptance.mjs verify-dry-run
+      - name: Deploy approved domestic registry diagnostic Worker
+        timeout-minutes: 5
+        run: |
+          npx wrangler deploy --dry-run --config work/wrangler.staging.diagnostic.toml
+          npx wrangler deploy --config work/wrangler.staging.diagnostic.toml
+      - name: Verify diagnostic Queue consumer propagation
+        timeout-minutes: 3
+        run: node scripts/run-staging-mock-acceptance.mjs verify-live-consumer
+      - name: Run one domestic registry pull diagnostic
+        id: registry_diagnostic
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          ACCEPTANCE_MAX_WAIT_MS: "120000"
+        run: node scripts/run-staging-mock-acceptance.mjs run
+      - name: Restore staging dry-run Worker
+        if: always()
+        timeout-minutes: 5
+        run: npx wrangler deploy --config work/wrangler.staging.toml
+      - name: Verify rollback and Tencent cleanup
+        if: always()
+        timeout-minutes: 7
+        env:
+          ACCEPTANCE_CLEANUP_WAIT_MS: "300000"
+        run: node scripts/run-staging-mock-acceptance.mjs verify-dry-run
+      - name: Assert domestic registry connectivity
+        if: always()
+        run: node scripts/assert-staging-registry-connectivity.mjs
+      - name: Upload sanitized diagnostic report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-registry-connectivity-${{ github.run_id }}
+          path: work/staging-mock-acceptance.json
+          if-no-files-found: error
+          retention-days: 30
