@@ -45,6 +45,7 @@ jobs:
       - name: Render isolated Wrangler configuration
         env:
           WORKER_NAME: ${{ vars.WORKER_NAME }}
+          WORKER_CUSTOM_DOMAIN: ${{ vars.WORKER_CUSTOM_DOMAIN }}
           ENVIRONMENT: ${{ inputs.environment }}
           TOKEN_SCOPE_ENFORCEMENT: ${{ inputs.environment == 'pilot' && 'enforce' || 'report' }}
           CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
@@ -91,6 +92,21 @@ jobs:
           for name in AGENT_TOKEN_SECRET TENCENT_SECRET_ID TENCENT_SECRET_KEY; do
             test -n "${!name}" || { echo "missing protected secret: ${name}" >&2; exit 1; }
             printf '%s' "${!name}" | npx wrangler secret put "${name}" --config work/wrangler.${{ inputs.environment }}.toml
+          done
+      - name: Verify the custom callback domain
+        env:
+          CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error --max-time 15 "${CALLBACK_BASE_URL}/health" | grep -q '"service":"scan-mvp-api"'; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "custom callback domain did not become healthy: ${CALLBACK_BASE_URL}" >&2
+              exit 1
+            fi
+            sleep 15
           done
       - name: Promote approved deployment to live provider
         if: inputs.enable_live_provider

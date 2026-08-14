@@ -3,6 +3,7 @@ name = "{{WORKER_NAME}}"
 # relative to that directory rather than to the repository root.
 main = "../worker/src/index.ts"
 compatibility_date = "2026-06-03"
+routes = [{ pattern = "{{WORKER_CUSTOM_DOMAIN}}", custom_domain = true }]
 
 [vars]
 ENV = "{{ENVIRONMENT}}"

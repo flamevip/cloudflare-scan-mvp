@@ -29,6 +29,10 @@ function validateInputs(env) {
     if (/[\r\n\0]/.test(value)) throw new Error(`${key} contains a forbidden control character`);
   }
   if (!['staging', 'pilot'].includes(values.ENVIRONMENT)) throw new Error('ENVIRONMENT must be staging or pilot');
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(values.WORKER_CUSTOM_DOMAIN)) {
+    throw new Error('WORKER_CUSTOM_DOMAIN must be a hostname without a scheme or path');
+  }
+  if (/\.workers\.dev$/i.test(values.WORKER_CUSTOM_DOMAIN)) throw new Error('WORKER_CUSTOM_DOMAIN must not use workers.dev');
   const expectedEnforcement = values.ENVIRONMENT === 'pilot' ? 'enforce' : 'report';
   if (values.TOKEN_SCOPE_ENFORCEMENT !== expectedEnforcement) throw new Error(`TOKEN_SCOPE_ENFORCEMENT must be ${expectedEnforcement} for ${values.ENVIRONMENT}`);
   const expectedMode = values.ENVIRONMENT === 'pilot' ? 'real_toolchain' : 'mock';
@@ -40,6 +44,10 @@ function validateInputs(env) {
   if (!['BGP', 'CMCC', 'CTCC', 'CUCC'].includes(values.TENCENT_EKS_CI_EIP_ISP)) throw new Error('TENCENT_EKS_CI_EIP_ISP is invalid');
   if (!/^https:\/\/[^\s/]+(?:\/.*)?$/i.test(values.CALLBACK_BASE_URL) || /localhost|127\.0\.0\.1|\[::1\]/i.test(values.CALLBACK_BASE_URL)) {
     throw new Error('CALLBACK_BASE_URL must be a non-local HTTPS URL');
+  }
+  const callbackUrl = new URL(values.CALLBACK_BASE_URL);
+  if (callbackUrl.origin !== `https://${values.WORKER_CUSTOM_DOMAIN}` || callbackUrl.pathname !== '/' || callbackUrl.search || callbackUrl.hash || callbackUrl.username || callbackUrl.password) {
+    throw new Error('CALLBACK_BASE_URL must be the HTTPS origin of WORKER_CUSTOM_DOMAIN');
   }
   const image = values.TENCENT_EKS_CI_IMAGE.match(/^([^/]+)\/.+@sha256:[a-f0-9]{64}$/i);
   if (!image) throw new Error('TENCENT_EKS_CI_IMAGE must be pinned by sha256 digest');

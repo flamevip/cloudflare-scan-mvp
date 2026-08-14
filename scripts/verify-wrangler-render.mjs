@@ -11,6 +11,7 @@ const output = resolve(work, 'wrangler.staging.toml');
 const baseEnv = {
   ...process.env,
   WORKER_NAME: 'scan-staging',
+  WORKER_CUSTOM_DOMAIN: 'scan-staging.example.test',
   ENVIRONMENT: 'staging',
   TOKEN_SCOPE_ENFORCEMENT: 'report',
   CALLBACK_BASE_URL: 'https://scan-staging.example.test',
@@ -41,6 +42,7 @@ try {
   assert.doesNotMatch(toml, /\{\{[A-Z0-9_]+\}\}/);
   assert.match(toml, /main = "\.\.\/worker\/src\/index\.ts"/, 'rendered config must resolve the Worker entry point from work/');
   assert.match(toml, /migrations_dir = "\.\.\/migrations\/d1"/, 'rendered config must resolve migrations from work/');
+  assert.match(toml, /routes = \[\{ pattern = "scan-staging\.example\.test", custom_domain = true \}\]/);
   assert.doesNotMatch(toml, /DEV_ADMIN_TOKEN/, 'remote config must not ship a development admin token binding');
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);
   assert.match(toml, /TENCENT_EKS_CI_DRY_RUN = "true"/);
@@ -50,6 +52,14 @@ try {
   const unpinned = run({ ...baseEnv, TENCENT_EKS_CI_IMAGE: 'registry.example.test/scan-agent:latest' }, resolve(work, 'invalid-image.toml'));
   assert.notEqual(unpinned.status, 0);
   assert.match(unpinned.stderr, /pinned by sha256 digest/);
+
+  const mismatchedCallback = run({ ...baseEnv, CALLBACK_BASE_URL: 'https://other.example.test' }, resolve(work, 'invalid-callback.toml'));
+  assert.notEqual(mismatchedCallback.status, 0);
+  assert.match(mismatchedCallback.stderr, /HTTPS origin of WORKER_CUSTOM_DOMAIN/);
+
+  const workersDevDomain = run({ ...baseEnv, WORKER_CUSTOM_DOMAIN: 'scan-staging.example.workers.dev', CALLBACK_BASE_URL: 'https://scan-staging.example.workers.dev' }, resolve(work, 'invalid-workers-dev.toml'));
+  assert.notEqual(workersDevDomain.status, 0);
+  assert.match(workersDevDomain.stderr, /must not use workers\.dev/);
 
   const unsafePilot = run({ ...baseEnv, ENVIRONMENT: 'pilot', TOKEN_SCOPE_ENFORCEMENT: 'report', AGENT_SCAN_MODE: 'real_toolchain' }, resolve(work, 'invalid-pilot.toml'));
   assert.notEqual(unsafePilot.status, 0);
