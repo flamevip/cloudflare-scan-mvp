@@ -6,6 +6,7 @@ import {
   type TencentContainerState,
   type TencentEksCiEvent,
 } from './tencent-eks-ci-service';
+import { normalizePublicIpv4 } from './provider-egress-service';
 import { toProviderLaunchError } from './provider-errors';
 
 const DIAGNOSTICS_BATCH_SIZE = 20;
@@ -49,11 +50,15 @@ export async function collectProviderDiagnostics(env: Env, run: ProviderDiagnost
   let status: string | null = null;
   let state: TencentContainerState | null = null;
   let eventsJson: string | null = null;
+  let providerEipId: string | null = null;
+  let providerEgressIp: string | null = null;
 
   if (describe.status === 'fulfilled') {
     const instance = describe.value.instances.find((candidate) => candidate.EksCiId === providerJobId) ?? null;
     status = sanitizeDiagnosticText(instance?.Status ?? (describe.value.total_count === 0 ? 'absent' : 'unknown'), MAX_STATUS_LENGTH);
     state = instance?.Containers?.map((container) => container.CurrentState).find((candidate): candidate is TencentContainerState => Boolean(candidate)) ?? null;
+    providerEipId = normalizeTencentEipId(instance?.AutoCreatedEipId);
+    providerEgressIp = typeof instance?.EipAddress === 'string' ? normalizePublicIpv4(instance.EipAddress) : null;
   } else {
     errors.push(toProviderLaunchError(describe.reason, 'tencent_eks_ci').safe_message);
   }
@@ -73,7 +78,9 @@ export async function collectProviderDiagnostics(env: Env, run: ProviderDiagnost
   try {
     await env.DB.prepare(`
       UPDATE agent_runs
-      SET provider_status = COALESCE(?, provider_status),
+      SET provider_eip_id = COALESCE(provider_eip_id, ?),
+          provider_egress_ip = COALESCE(provider_egress_ip, ?),
+          provider_status = COALESCE(?, provider_status),
           provider_container_state = COALESCE(?, provider_container_state),
           provider_status_reason = COALESCE(?, provider_status_reason),
           provider_status_message = COALESCE(?, provider_status_message),
@@ -82,6 +89,8 @@ export async function collectProviderDiagnostics(env: Env, run: ProviderDiagnost
           provider_diagnostics_updated_at = ?, updated_at = ?
       WHERE id = ? AND task_id = ? AND provider = 'tencent_eks_ci' AND provider_job_id = ?
     `).bind(
+      providerEipId,
+      providerEgressIp,
       status,
       sanitizeDiagnosticText(state?.State, MAX_STATUS_LENGTH),
       sanitizeDiagnosticText(state?.Reason, MAX_REASON_LENGTH),
@@ -151,6 +160,12 @@ function sanitizeEvent(event: TencentEksCiEvent): Record<string, unknown> {
 
 function isRealTencentEksCiId(value: string | null): value is string {
   return Boolean(value && /^eksci-[A-Za-z0-9-]+$/.test(value));
+}
+
+function normalizeTencentEipId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim();
+  return /^eip-[A-Za-z0-9-]{1,64}$/.test(candidate) ? candidate : null;
 }
 
 function normalizeExitCode(value: unknown): number | null {
