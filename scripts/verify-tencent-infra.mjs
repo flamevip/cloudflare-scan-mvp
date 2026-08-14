@@ -93,12 +93,12 @@ assert.match(pilot, /AGENT_MAX_CANDIDATES=100/);
 assert.match(pilot, /TENCENT_EKS_CI_DRY_RUN=true/);
 assert.match(pilot, /TENCENT_EKS_CI_AUTO_CREATE_EIP=true/);
 for (const envConfig of [staging, pilot]) {
-  assert.match(envConfig, /TENCENT_EKS_CI_IMAGE=ghcr\.io\/flamevip\/cloudflare-scan-mvp-agent@sha256:replace/);
-  assert.match(envConfig, /TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ghcr\.io/);
+  assert.match(envConfig, /TENCENT_EKS_CI_IMAGE=registry-intl\.cn-chengdu\.aliyuncs\.com\/70v2ray\/scan-agent-cloud@sha256:replace/);
+  assert.match(envConfig, /TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=registry-intl\.cn-chengdu\.aliyuncs\.com/);
   assert.doesNotMatch(envConfig, /TENCENT_TCR_|tencentcloudcr/);
 }
 
-console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], per_run_auto_eip: true, shared_nat: false, ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, tcr_managed: false, image_registry: 'public-ghcr', ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
+console.log(JSON.stringify({ ok: true, isolated_environments: ['staging', 'pilot'], per_run_auto_eip: true, shared_nat: false, ordered_egress_denies: true, cos_encrypted_versioned_backend: true, cam_access_keys_in_state: false, tcr_managed: false, image_registry: 'public-aliyun-acr-chengdu', ci_apply_disabled: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 
 function text(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8');

@@ -511,8 +511,8 @@ TENCENT_EKS_CI_REGION=ap-chengdu
 TENCENT_EKS_CI_VPC_ID=vpc-...
 TENCENT_EKS_CI_SUBNET_ID=subnet-...
 TENCENT_EKS_CI_SECURITY_GROUP_IDS=sg-...
-TENCENT_EKS_CI_IMAGE=ghcr.io/flamevip/cloudflare-scan-mvp-agent@sha256:<64-hex>
-TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=ghcr.io
+TENCENT_EKS_CI_IMAGE=registry-intl.cn-chengdu.aliyuncs.com/70v2ray/scan-agent-cloud@sha256:<64-hex>
+TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST=registry-intl.cn-chengdu.aliyuncs.com
 TENCENT_EKS_CI_CPU=1
 TENCENT_EKS_CI_MEMORY=2
 TENCENT_EKS_CI_AUTO_CREATE_EIP=true
@@ -527,9 +527,11 @@ npx wrangler secret put TENCENT_SECRET_ID
 npx wrangler secret put TENCENT_SECRET_KEY
 ```
 
-生产试运行使用公开 GHCR 镜像，因此不会向腾讯请求附加 `ImageRegistryCredentials`，也不需要持久化 GitHub registry token。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
+生产试运行使用成都地域的公开阿里云 ACR 镜像，因此不会向腾讯请求附加 `ImageRegistryCredentials`。ACR 推送凭据只保存在受保护的 GitHub `agent-image-publish` Environment 中，不进入 Worker、Terraform state 或 EKS 请求。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
 
-腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。定时收敛和删除前会读取实例容器状态及 `DescribeEKSContainerInstanceEvent`，把经过截断和脱敏的状态、原因、消息、退出码及最近事件保存到 `agent_runs.provider_*` 诊断字段；事件查询失败不会阻断资源清理。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。GHCR 构建显式固定为 `linux/amd64`。
+首次发布前，在 GitHub `agent-image-publish` Environment 中配置 `ALIYUN_ACR_USERNAME` 和 `ALIYUN_ACR_PASSWORD` 两个 secrets，并确认 `70v2ray/scan-agent-cloud` 仓库类型为公开。`build-agent.yml` 推送并签名镜像后会退出 ACR 登录，再匿名读取该 digest；匿名检查失败时不会输出或晋级镜像。
+
+腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。定时收敛和删除前会读取实例容器状态及 `DescribeEKSContainerInstanceEvent`，把经过截断和脱敏的状态、原因、消息、退出码及最近事件保存到 `agent_runs.provider_*` 诊断字段；事件查询失败不会阻断资源清理。terminal run 会拒绝迟到 callback，并由定时 cleanup 调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`。ACR 构建显式固定为 `linux/amd64`。
 
 建议 CAM 最小权限：
 

@@ -12,5 +12,5 @@ output "environment_runtime" {
 }
 
 output "secret_handling" {
-  value = "Create CAM access keys outside Terraform and store them only in protected GitHub environments and Wrangler secrets. The public GHCR image requires no registry credential."
+  value = "Create CAM access keys outside Terraform and store them only in protected GitHub environments and Wrangler secrets. The public Alibaba Cloud ACR image requires no registry credential at EKS runtime."
 }
