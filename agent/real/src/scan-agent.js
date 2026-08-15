@@ -25,6 +25,9 @@ const STAGE_TIMEOUT_MS = {
   httpx: 2 * 60_000,
   nuclei: 4 * 60_000,
 };
+const DNS_FILTER_BUDGET_MS = 45_000;
+const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+const DNS_FILTER_CONCURRENCY = 5;
 const FORBIDDEN_ADDRESSES = buildForbiddenAddressList();
 const IPV4_MAPPED_ADDRESSES = buildIpv4MappedAddressList();
 
@@ -123,7 +126,7 @@ function runMockMode(targets, candidates, modules) {
 
 async function runHttpProbeMode(env, targets, candidates, modules) {
   const initial = candidates.length ? candidates : targets.map((target) => normalizeCandidate(`https://www.${target}`, targets)).filter(Boolean);
-  const urls = await filterSafeCandidates(initial.slice(0, env.MAX_CANDIDATES));
+  const urls = await filterSafeCandidates(initial.slice(0, env.MAX_CANDIDATES), env);
   const records = [];
   for (const candidate of urls) {
     assertWithinDeadline(env);
@@ -152,14 +155,15 @@ async function runRealToolchainMode(env, targets, initialCandidates, modules) {
   const workdir = await mkdtemp(join(tmpdir(), 'scan-agent-'));
   try {
     const stages = [];
-    let candidates = await filterSafeCandidates([...initialCandidates].slice(0, env.MAX_CANDIDATES));
+    let candidates = [...initialCandidates].slice(0, env.MAX_CANDIDATES);
     if (modules.includes('subdomain')) {
       const subfinder = await runSubfinder(env, workdir, targets);
       stages.push(subfinder.stage);
-      candidates = await filterSafeCandidates(mergeCandidates(targets, [...candidates.map((candidate) => candidate.url), ...subfinder.candidates].join('\n')).slice(0, env.MAX_CANDIDATES));
+      candidates = mergeCandidates(targets, [...candidates.map((candidate) => candidate.url), ...subfinder.candidates].join('\n')).slice(0, env.MAX_CANDIDATES);
     } else {
       stages.push(skippedStage('subfinder', 'skipped_not_requested', targets.length, 'subdomain module was not requested'));
     }
+    candidates = await filterSafeCandidates(candidates, env);
     let httpxJsonl = '';
     let assets = [];
     if (modules.includes('http_probe')) {
@@ -300,21 +304,47 @@ async function runNuclei(env, workdir, urls) {
   return { stdout: result.stdout, stage: commandStage('nuclei', result, urls.length) };
 }
 
-async function filterSafeCandidates(candidates) {
-  const safe = [];
-  for (const candidate of candidates) {
-    try {
-      const addresses = await lookup(candidate.host, { all: true, verbatim: true });
-      if (!addresses.length || addresses.some((entry) => isForbiddenIp(entry.address))) {
-        writeErr(`candidate rejected by resolved IP policy: ${candidate.host}\n`);
-        continue;
+export async function filterSafeCandidates(candidates, env, options = {}) {
+  const resolver = options.lookup ?? lookup;
+  const lookupTimeoutMs = clampNumber(options.lookupTimeoutMs, DNS_LOOKUP_TIMEOUT_MS, 1, DNS_LOOKUP_TIMEOUT_MS);
+  const concurrency = clampNumber(options.concurrency, DNS_FILTER_CONCURRENCY, 1, DNS_FILTER_CONCURRENCY);
+  const callbackReserveMs = 60_000;
+  const availableMs = remainingMs(env) - callbackReserveMs;
+  if (availableMs <= 0) throw new Error('task deadline has no callback reserve remaining before DNS filtering');
+  const budgetMs = Math.min(clampNumber(options.budgetMs, DNS_FILTER_BUDGET_MS, 1, DNS_FILTER_BUDGET_MS), availableMs);
+  const deadlineAt = Date.now() + budgetMs;
+  const hosts = [...new Set(candidates.map((candidate) => candidate.host))];
+  const safeHosts = new Set();
+  let cursor = 0;
+  let attempted = 0;
+
+  const workers = Array.from({ length: Math.min(concurrency, hosts.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= hosts.length) return;
+      const host = hosts[index];
+      const remainingBudgetMs = deadlineAt - Date.now();
+      if (remainingBudgetMs <= 0) return;
+      attempted += 1;
+      try {
+        const addresses = await withTimeout(
+          resolver(host, { all: true, verbatim: true }),
+          Math.min(lookupTimeoutMs, remainingBudgetMs),
+          `DNS lookup timed out for ${host}`,
+        );
+        if (!addresses.length || addresses.some((entry) => isForbiddenIp(entry.address))) {
+          writeErr(`candidate rejected by resolved IP policy: ${host}\n`);
+          continue;
+        }
+        safeHosts.add(host);
+      } catch (error) {
+        writeErr(`candidate DNS resolution failed: ${host}: ${error instanceof Error ? error.message : String(error)}\n`);
       }
-      safe.push(candidate);
-    } catch (error) {
-      writeErr(`candidate DNS resolution failed: ${candidate.host}: ${error instanceof Error ? error.message : String(error)}\n`);
     }
-  }
-  return safe;
+  });
+  await Promise.all(workers);
+  if (attempted < hosts.length) writeErr(`candidate DNS filter budget exhausted after ${budgetMs}ms; unresolved hosts were rejected\n`);
+  return candidates.filter((candidate) => safeHosts.has(candidate.host));
 }
 
 export function isForbiddenIp(address) {
@@ -749,6 +779,20 @@ function runCommand(command, args, options) {
       });
     });
   });
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function commandStage(name, result, inputCount) {
