@@ -37,7 +37,7 @@ Safety defaults for `real_toolchain`:
 - The authorized root target is always retained as both an HTTPS and HTTP candidate, even when `subfinder` returns no subdomains or optional candidates are present.
 - Candidate merge revalidates every candidate host against authorized root domains from `/api/agent/targets`.
 - `nuclei` uses severities `info,low,medium,high,critical`, excludes tags `dos,bruteforce,brute-force,fuzz,fuzzing,intrusive,destructive`, and runs a fixed low-impact Pilot profile from the baked template commit (security headers, robots/sitemap, technology/WAF detection, and deprecated TLS).
-- Stage budgets are fixed at 2 minutes for subfinder, 3 minutes for httpx, and 8 minutes for nuclei, with one minute reserved for ingest and terminal callbacks. A stage budget expiry is recorded as `partial_timeout`; the Agent keeps the partial stdout/stderr and continues with safe root-domain candidates.
+- Stage budgets are fixed at 1 minute for subfinder, 2 minutes for httpx, and 4 minutes for nuclei, with the remaining task time reserved for provisioning, ingest, terminal callbacks, and cleanup. A stage budget expiry is recorded as `partial_timeout`; the Agent keeps the partial stdout/stderr and continues with safe root-domain candidates.
 - Rate and process timeout come from Worker-injected `RATE_LIMIT` and `TIMEOUT_MINUTES`.
 - Raw artifacts contain one structured stage record for each of `subfinder`, `httpx`, and `nuclei`, including stdout, stderr, exit code, duration, input/output counts, and any skip/failure reason.
 - If `httpx` produces no reachable authorized URL, diagnostics are ingested first and the task is then marked failed. Zero Nuclei findings remain a valid successful result when Nuclei had URL input.

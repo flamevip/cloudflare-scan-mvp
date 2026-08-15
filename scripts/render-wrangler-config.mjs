@@ -37,6 +37,8 @@ function validateInputs(env) {
   if (values.TOKEN_SCOPE_ENFORCEMENT !== expectedEnforcement) throw new Error(`TOKEN_SCOPE_ENFORCEMENT must be ${expectedEnforcement} for ${values.ENVIRONMENT}`);
   const expectedMode = values.ENVIRONMENT === 'pilot' ? 'real_toolchain' : 'mock';
   if (values.AGENT_SCAN_MODE !== expectedMode) throw new Error(`AGENT_SCAN_MODE must be ${expectedMode} for ${values.ENVIRONMENT}`);
+  if (!['0', '1'].includes(values.TASK_MAX_RETRY)) throw new Error('TASK_MAX_RETRY must be 0 or 1');
+  if (values.ENVIRONMENT === 'pilot' && values.TASK_MAX_RETRY !== '0') throw new Error('TASK_MAX_RETRY must be 0 for pilot');
   if (!['true', 'false'].includes(values.TENCENT_EKS_CI_DRY_RUN)) throw new Error('TENCENT_EKS_CI_DRY_RUN must be true or false');
   if (values.TENCENT_EKS_CI_AUTO_CREATE_EIP !== 'true') throw new Error('TENCENT_EKS_CI_AUTO_CREATE_EIP must be true for isolated per-run egress');
   const eipBandwidth = Number(values.TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS);

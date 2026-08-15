@@ -117,6 +117,7 @@ assert.match(pilot, /ENVIRONMENT=pilot/);
 assert.match(pilot, /TOKEN_SCOPE_ENFORCEMENT=enforce/);
 assert.match(pilot, /AGENT_SCAN_MODE=real_toolchain/);
 assert.match(pilot, /AGENT_MAX_CANDIDATES=100/);
+assert.match(pilot, /TASK_MAX_RETRY=0/);
 assert.match(pilot, /TENCENT_EKS_CI_DRY_RUN=true/);
 assert.match(pilot, /TENCENT_EKS_CI_AUTO_CREATE_EIP=true/);
 for (const envConfig of [staging, pilot]) {

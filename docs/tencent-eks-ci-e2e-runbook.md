@@ -8,7 +8,7 @@
 - 关闭 dry-run 前，审批记录必须明确：环境、书面授权目标、地域、VPC/子网/安全组、镜像摘要、扫描模式、速率、候选上限、超时、费用上限和清理责任人。
 - staging 第一次真实实例只能使用 `SCAN_MODE=mock`、单副本、`RestartPolicy=Never`、5 分钟超时、无 Hunter。
 - pilot 只允许一个书面授权根域名，固定 `subdomain + http_probe + nuclei`、`rate_limit=1`、`max_agents=1`、最多 100 个候选、最长 15 分钟、无 Hunter、无用户模板。
-- Pilot 工具阶段预算固定为 subfinder 2 分钟、httpx 3 分钟、nuclei 8 分钟，并保留 1 分钟用于入库/终态回调；Nuclei 只运行镜像中固定 commit 的低影响 Pilot 模板集。阶段超时记录为 `partial_timeout` 并保留 stdout/stderr，不得因此扩大速率、候选或模板范围。
+- Pilot 工具阶段预算固定为 subfinder 1 分钟、httpx 2 分钟、nuclei 4 分钟，其余任务时间保留给实例准备、入库、终态回调和清理；Nuclei 只运行镜像中固定 commit 的低影响 Pilot 模板集。阶段超时记录为 `partial_timeout` 并保留 stdout/stderr，不得因此扩大速率、候选或模板范围。
 - 不得执行真实 Terraform apply、关闭 dry-run 或发起授权目标扫描，除非当次操作已获得独立人工审批。
 - CAM/Cloudflare 凭据不得进入 Terraform state、源码、命令参数、日志、preflight 输出或扫描产物。
 
