@@ -21,6 +21,14 @@
     "repository": "https://github.com/projectdiscovery/nuclei-templates.git",
     "commit": "0f569c3724b966c2ba357c1d26a0aa6c041a6af5",
     "tag": "v10.2.7",
-    "allow_user_templates": false
+    "allow_user_templates": false,
+    "pilot_profile": [
+      "http/misconfiguration/http-missing-security-headers.yaml",
+      "http/miscellaneous/robots-txt.yaml",
+      "http/miscellaneous/sitemap-detect.yaml",
+      "http/technologies/tech-detect.yaml",
+      "http/technologies/waf-detect.yaml",
+      "ssl/deprecated-tls.yaml"
+    ]
   }
 }

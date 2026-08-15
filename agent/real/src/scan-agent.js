@@ -12,6 +12,19 @@ const SAFE_NUCLEI_SEVERITIES = ['info', 'low', 'medium', 'high', 'critical'];
 const SAFE_NUCLEI_EXCLUDE_TAGS = ['dos', 'bruteforce', 'brute-force', 'fuzz', 'fuzzing', 'intrusive', 'destructive'];
 const DEFAULT_MODULES = ['subdomain', 'http_probe', 'nuclei'];
 const BAKED_NUCLEI_TEMPLATES = '/usr/local/share/nuclei-templates';
+const PILOT_NUCLEI_TEMPLATE_PATHS = [
+  'http/misconfiguration/http-missing-security-headers.yaml',
+  'http/miscellaneous/robots-txt.yaml',
+  'http/miscellaneous/sitemap-detect.yaml',
+  'http/technologies/tech-detect.yaml',
+  'http/technologies/waf-detect.yaml',
+  'ssl/deprecated-tls.yaml',
+];
+const STAGE_TIMEOUT_MS = {
+  subfinder: 2 * 60_000,
+  httpx: 3 * 60_000,
+  nuclei: 8 * 60_000,
+};
 const FORBIDDEN_ADDRESSES = buildForbiddenAddressList();
 const IPV4_MAPPED_ADDRESSES = buildIpv4MappedAddressList();
 
@@ -222,7 +235,10 @@ async function runSubfinder(env, workdir, targets) {
   let error = null;
   for (const target of targets) {
     assertWithinDeadline(env);
-    const result = await runCommand('subfinder', ['-silent', '-all', '-rl', String(env.RATE_LIMIT), '-d', target], { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
+    const result = await runCommand('subfinder', ['-silent', '-all', '-rl', String(env.RATE_LIMIT), '-max-time', '2', '-d', target], {
+      cwd: workdir,
+      timeoutMs: stageTimeoutMs(env, STAGE_TIMEOUT_MS.subfinder),
+    });
     stdout.push(result.stdout);
     stderr.push(result.stderr);
     output.push(...parseLines(result.stdout));
@@ -238,7 +254,7 @@ async function runSubfinder(env, workdir, targets) {
     candidates,
     stage: {
       name: 'subfinder',
-      status: error ? 'failed' : 'completed',
+      status: error ? (String(error).includes('timed out') ? 'partial_timeout' : 'failed') : 'completed',
       started_at: startedAt,
       finished_at: new Date().toISOString(),
       duration_ms: Math.max(0, Date.now() - startedMs),
@@ -262,7 +278,7 @@ async function runHttpx(env, workdir, candidates) {
     '-rate-limit', String(env.RATE_LIMIT),
     '-timeout', String(Math.max(1, Math.min(30, Math.floor(env.HTTP_TIMEOUT_MS / 1000)))),
     '-l', inputFile,
-  ], { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
+  ], { cwd: workdir, timeoutMs: stageTimeoutMs(env, STAGE_TIMEOUT_MS.httpx) });
   return { stdout: result.stdout, stage: commandStage('httpx', result, candidates.length) };
 }
 
@@ -279,8 +295,8 @@ async function runNuclei(env, workdir, urls) {
     '-disable-unsigned-templates',
     '-l', inputFile,
   ];
-  if (env.NUCLEI_TEMPLATES) args.push('-templates', env.NUCLEI_TEMPLATES);
-  const result = await runCommand('nuclei', args, { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
+  for (const relativePath of PILOT_NUCLEI_TEMPLATE_PATHS) args.push('-templates', join(env.NUCLEI_TEMPLATES, relativePath));
+  const result = await runCommand('nuclei', args, { cwd: workdir, timeoutMs: stageTimeoutMs(env, STAGE_TIMEOUT_MS.nuclei) });
   return { stdout: result.stdout, stage: commandStage('nuclei', result, urls.length) };
 }
 
@@ -738,7 +754,7 @@ function runCommand(command, args, options) {
 function commandStage(name, result, inputCount) {
   return {
     name,
-    status: result.ok ? 'completed' : 'failed',
+    status: result.ok ? 'completed' : result.timed_out ? 'partial_timeout' : 'failed',
     started_at: result.started_at,
     finished_at: result.finished_at,
     duration_ms: result.duration_ms,
@@ -751,6 +767,13 @@ function commandStage(name, result, inputCount) {
     stderr: result.stderr,
     error: result.error,
   };
+}
+
+function stageTimeoutMs(env, capMs) {
+  const callbackReserveMs = 60_000;
+  const available = remainingMs(env) - callbackReserveMs;
+  if (available <= 0) throw new Error(`task deadline has no callback reserve remaining before tool execution`);
+  return Math.max(1_000, Math.min(capMs, env.TOOL_TIMEOUT_MS, available));
 }
 
 function skippedStage(name, status, inputCount, reason) {
