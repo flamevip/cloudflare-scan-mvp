@@ -17,6 +17,7 @@ import { sweepTimedOutAgentRuns } from './services/timeout-service';
 import { sweepProviderCleanup } from './services/provider-cleanup-service';
 import { sweepRetention } from './services/retention-service';
 import { sweepProviderDiagnostics } from './services/provider-diagnostics-service';
+import { shouldRunDailyRetention } from './services/schedule-service';
 
 export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
@@ -81,15 +82,15 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    if (controller.cron === '0 3 * * *') {
-      const retention = await sweepRetention(env);
-      console.log(JSON.stringify({ event: 'scheduled.retention', ...retention }));
-      return;
-    }
     const diagnostics = await sweepProviderDiagnostics(env);
     const timeouts = await sweepTimedOutAgentRuns(env);
     const cleanup = await sweepProviderCleanup(env);
     console.log(JSON.stringify({ event: 'scheduled.convergence', diagnostics, timeouts, cleanup }));
+
+    if (shouldRunDailyRetention(controller.scheduledTime)) {
+      const retention = await sweepRetention(env);
+      console.log(JSON.stringify({ event: 'scheduled.retention', scheduled_time: controller.scheduledTime, ...retention }));
+    }
   },
 };
 

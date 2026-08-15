@@ -7,6 +7,9 @@ import ts from '../node_modules/typescript/lib/typescript.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(resolve(root, 'worker/src/services/retention-service.ts'), 'utf8');
+const schedule = loadTsModule('worker/src/services/schedule-service.ts', {});
+const remoteWranglerTemplate = readFileSync(resolve(root, 'config/wrangler.tencent.template.toml'), 'utf8');
+const localWrangler = readFileSync(resolve(root, 'wrangler.toml'), 'utf8');
 const auditEvents = [];
 const retention = loadTsModule('worker/src/services/retention-service.ts', {
   '../ids': { nowIso: () => '2026-08-11T00:00:00.000Z' },
@@ -68,8 +71,16 @@ assert.deepEqual({ r2: r2Deletes.length, artifacts: deletedArtifactIds.length, t
 assert.match(source, /julianday\(ar\.created_at\)\s*<\s*julianday\(\?\)/, 'artifact boundary must be strictly older than cutoff');
 assert.match(source, /julianday\(t\.finished_at\)\s*<\s*julianday\(\?\)/, 'metadata boundary must be strictly older than cutoff');
 assert.match(source, /NOT EXISTS \(SELECT 1 FROM artifacts ar WHERE ar\.task_id = t\.id\)/, 'task metadata must remain while artifact rows exist');
+assert.equal(schedule.shouldRunDailyRetention(Date.parse('2026-08-11T03:00:00.000Z')), true);
+assert.equal(schedule.shouldRunDailyRetention(Date.parse('2026-08-11T02:50:00.000Z')), false);
+assert.equal(schedule.shouldRunDailyRetention(Date.parse('2026-08-11T03:10:00.000Z')), false);
+assert.equal(schedule.shouldRunDailyRetention(Number.NaN), false);
+for (const wrangler of [remoteWranglerTemplate, localWrangler]) {
+  assert.match(wrangler, /crons = \["\*\/10 \* \* \* \*"\]/, 'maintenance must use one shared ten-minute Cron Trigger');
+  assert.doesNotMatch(wrangler, /0 3 \* \* \*/, 'daily retention must be multiplexed instead of consuming a second Cron Trigger');
+}
 
-console.log(JSON.stringify({ ok: true, artifact_r2_first: true, r2_failure_retained_for_retry: true, dry_run_non_mutating: true, artifact_days: 30, metadata_days: 180, audit_days: 180, strict_cutoff: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
+console.log(JSON.stringify({ ok: true, artifact_r2_first: true, r2_failure_retained_for_retry: true, dry_run_non_mutating: true, artifact_days: 30, metadata_days: 180, audit_days: 180, strict_cutoff: true, single_cron_multiplexing: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 
 function fakeStatement(sql) {
   return {

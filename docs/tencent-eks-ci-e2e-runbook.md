@@ -200,7 +200,7 @@ Content-Type: application/json
 {"dry_run": true}
 ```
 
-审批后才用 `{"dry_run": false}` 手动执行；每日 `0 3 * * *` 自动执行。必须验证：
+审批后才用 `{"dry_run": false}` 手动执行；共享的 `*/10 * * * *` Cron Trigger 在 UTC 03:00 轮次追加执行每日保留清理，不再单独占用第二个 Cron Trigger。必须验证：
 
 - R2 删除成功后才删除 D1 artifact；失败记录保留供下次重试；
 - 有 artifact 的过期 task metadata 不会提前删除；
