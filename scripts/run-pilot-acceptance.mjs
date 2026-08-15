@@ -95,7 +95,7 @@ try {
       project_id: 'project-default',
       name: `authorized Pilot ${target} ${approvalReference}`,
       targets: [target],
-      target_urls: [`https://${target}/`],
+      target_urls: [`https://${target}:443/`],
       modules: ['subdomain', 'http_probe', 'nuclei'],
       external_sources: [],
       max_agents: 1,
@@ -241,7 +241,7 @@ async function getPreflight() {
     body: {
       provider: 'tencent_eks_ci',
       targets: [target],
-      target_urls: [`https://${target}/`],
+      target_urls: [`https://${target}:443/`],
       modules: ['subdomain', 'http_probe', 'nuclei'],
       rate_limit: 1,
       timeout_minutes: 15,
