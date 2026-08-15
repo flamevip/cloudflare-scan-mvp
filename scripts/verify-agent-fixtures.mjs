@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildIngestResult,
+  filterSafeCandidates,
   isForbiddenIp,
   mergeCandidates,
   parseHttpxJsonl,
@@ -30,6 +31,24 @@ assert.equal(exactUrlCandidates.length, 3);
 assert.equal(exactUrlCandidates[2].url, 'http://lanproxy.eventec.cn:8000/');
 assert.equal(exactUrlCandidates[2].host, 'lanproxy.eventec.cn');
 assert.equal(exactUrlCandidates[2].port, 8000);
+
+const dnsFixtureEnv = { DEADLINE_AT: Date.now() + 120_000, TIMEOUT_MINUTES: 2 };
+const dnsSafe = await filterSafeCandidates(candidates, dnsFixtureEnv, {
+  lookup: async (host) => [{ address: host === 'api.example.com' ? '10.0.0.1' : '93.184.216.34' }],
+  lookupTimeoutMs: 20,
+  budgetMs: 100,
+  concurrency: 2,
+});
+assert.deepEqual(dnsSafe.map((candidate) => candidate.host), ['example.com', 'example.com']);
+const dnsTimeoutStarted = Date.now();
+const dnsTimedOut = await filterSafeCandidates([{ url: 'https://slow.example.com/', host: 'slow.example.com', port: 443, scheme: 'https' }], dnsFixtureEnv, {
+  lookup: async () => new Promise(() => {}),
+  lookupTimeoutMs: 10,
+  budgetMs: 20,
+  concurrency: 1,
+});
+assert.deepEqual(dnsTimedOut, []);
+assert.ok(Date.now() - dnsTimeoutStarted < 500, 'DNS lookup timeout must not stall the Agent');
 assert.equal(exactUrlCandidates[2].scheme, 'http');
 
 const httpxJsonl = [
@@ -92,7 +111,8 @@ const emptyHttpx = buildIngestResult({
 assert.match(emptyHttpx.artifacts[0].raw_content, /failed_no_reachable_urls/);
 assert.match(emptyHttpx.artifacts[0].raw_content, /skipped_no_urls/);
 assert.match(emptyHttpx.artifacts[0].search_content, /Outcome: failed/);
-assert.match(agentSource, /lookup\(candidate\.host, \{ all: true, verbatim: true \}\)/, 'every real candidate must be resolved before tool execution');
+assert.match(agentSource, /resolver\(host, \{ all: true, verbatim: true \}\)/, 'every unique real candidate host must be resolved before tool execution');
+assert.match(agentSource, /withTimeout\([\s\S]*Math\.min\(lookupTimeoutMs, remainingBudgetMs\)/, 'each DNS lookup must be individually deadline-bounded');
 assert.match(agentSource, /'-follow-host-redirects'/, 'httpx must only follow same-host redirects');
 assert.doesNotMatch(agentSource, /'-follow-redirects'/, 'httpx must not follow unrestricted redirects');
 assert.match(agentSource, /redirect: 'manual'/, 'built-in HTTP probe must not automatically follow redirects');
@@ -103,6 +123,7 @@ assert.ok(
   'the first heartbeat must be sent before input downloads so startup can be distinguished from callback/download failure',
 );
 assert.match(agentSource, /if \(!waitForSlot\) return;/, 'periodic heartbeats must be skipped instead of overlapping');
+assert.match(agentSource, /DNS_FILTER_BUDGET_MS = 45_000[\s\S]*DNS_LOOKUP_TIMEOUT_MS = 5_000[\s\S]*DNS_FILTER_CONCURRENCY = 5/, 'DNS filtering must be bounded and concurrent');
 assert.match(agentSource, /custom Nuclei template paths are disabled/, 'runtime template-path overrides must be rejected');
 assert.match(agentSource, /'subfinder', \['-silent', '-all', '-rl', String\(env\.RATE_LIMIT\), '-max-time', '1'/, 'subfinder must honor the task rate limit and bounded enumeration time');
 assert.match(agentSource, /'-follow-host-redirects',[\s\S]*'-rate-limit', String\(env\.RATE_LIMIT\)/, 'httpx must honor the task rate limit');
