@@ -13,6 +13,9 @@ const stagingAcceptanceWorkflow = text('.github/workflows/staging-mock-acceptanc
 const stagingRegistryDiagnosticWorkflow = text('.github/workflows/staging-registry-connectivity.yml');
 const stagingAcceptanceScript = text('scripts/run-staging-mock-acceptance.mjs');
 const stagingRegistryDiagnosticScript = text('scripts/assert-staging-registry-connectivity.mjs');
+const pilotAcceptanceWorkflow = text('.github/workflows/pilot-acceptance.yml');
+const pilotAcceptanceScript = text('scripts/run-pilot-acceptance.mjs');
+const pilotTokenScript = text('scripts/manage-pilot-acceptance-token.mjs');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
 
@@ -81,6 +84,27 @@ assert.match(stagingRegistryDiagnosticScript, /ErrImagePull\|ImagePullBackOff\|F
 assert.match(stagingRegistryDiagnosticScript, /diagnostics\.status, 'Running'/);
 assert.match(stagingRegistryDiagnosticScript, /report\.cleanup_completed, true/);
 assert.match(stagingRegistryDiagnosticScript, /tencent_instance_count_after/);
+
+assert.match(pilotAcceptanceWorkflow, /environment: pilot/);
+assert.match(pilotAcceptanceWorkflow, /group: pilot-live-acceptance/);
+assert.match(pilotAcceptanceWorkflow, /PILOT_ADMIN_TOKEN: \$\{\{ secrets\.PILOT_ACCEPTANCE_ADMIN_TOKEN \}\}/);
+assert.match(pilotAcceptanceWorkflow, /test "\$PILOT_TARGET" = "70yun\.xyz"/);
+assert.match(pilotAcceptanceWorkflow, /name: Restore Pilot application dry-run[\s\S]*if: always\(\)/);
+assert.match(pilotAcceptanceWorkflow, /name: Verify rollback and zero Tencent instances[\s\S]*if: always\(\)/);
+assert.match(pilotAcceptanceWorkflow, /name: Revoke the short-lived Pilot token[\s\S]*if: always\(\)/);
+assert.match(pilotAcceptanceWorkflow, /max_cost_usd: 0\.7|ACCEPTANCE_MAX_WAIT_MS/, 'Pilot workflow must retain its bounded runtime and cost envelope');
+assert.match(pilotAcceptanceScript, /targets: \[target\][\s\S]*target_urls: \[`https:\/\/\$\{target\}\/`\][\s\S]*modules: \['subdomain', 'http_probe', 'nuclei'\]/);
+assert.match(pilotAcceptanceScript, /max_agents: 1[\s\S]*rate_limit: 1[\s\S]*timeout_minutes: 15[\s\S]*max_cost_usd: 0\.7/);
+assert.match(pilotAcceptanceScript, /authorized root domain did not enter the httpx result set/);
+assert.match(pilotAcceptanceScript, /for \(const stageName of \['subfinder', 'httpx', 'nuclei'\]\)/);
+assert.match(pilotAcceptanceScript, /duration_seconds is missing/);
+assert.match(pilotAcceptanceScript, /independent provider egress IP was not recorded/);
+assert.match(pilotAcceptanceScript, /Tencent EKS CI instances remain after Pilot rollback/);
+assert.match(pilotTokenScript, /createHash\('sha256'\)/);
+assert.match(pilotTokenScript, /scope_json = \?/);
+assert.match(pilotTokenScript, /'\["70yun\.xyz"\]'/);
+assert.match(pilotTokenScript, /revoked_at = COALESCE\(revoked_at, \?\)/);
+assert.doesNotMatch(pilotTokenScript, /console\.log\([^\n]*rawToken/, 'Pilot token plaintext must never be logged');
 
 assert.match(staging, /ENVIRONMENT=staging/);
 assert.match(staging, /TOKEN_SCOPE_ENFORCEMENT=report/);

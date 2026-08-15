@@ -1,0 +1,133 @@
+name: pilot-live-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval_reference:
+        description: Written Pilot approval reference (PILOT-YYYYMMDD-NNN)
+        required: true
+        type: string
+      target:
+        description: Authorized root domain; this workflow is hard-limited to 70yun.xyz
+        required: true
+        default: 70yun.xyz
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pilot-live-acceptance
+  cancel-in-progress: false
+
+jobs:
+  accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: pilot
+    env:
+      PILOT_TARGET: ${{ inputs.target }}
+      APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+      PILOT_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+      PILOT_ADMIN_TOKEN: ${{ secrets.PILOT_ACCEPTANCE_ADMIN_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      ACCEPTANCE_REPORT_PATH: work/pilot-acceptance.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Validate the fixed authorization envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PILOT_TARGET" = "70yun.xyz"
+          [[ "$APPROVAL_REFERENCE" =~ ^PILOT-[0-9]{8}-[0-9]{3}$ ]]
+          test -n "$PILOT_ADMIN_TOKEN"
+      - name: Verify the approved Agent digest signature
+        env:
+          IMAGE: ${{ vars.TENCENT_EKS_CI_IMAGE }}
+        run: cosign verify "$IMAGE" --certificate-identity-regexp="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build-agent.yml@refs/.+$" --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+      - name: Render isolated Pilot dry-run configuration
+        env:
+          WORKER_NAME: ${{ vars.WORKER_NAME }}
+          WORKER_CUSTOM_DOMAIN: ${{ vars.WORKER_CUSTOM_DOMAIN }}
+          ENVIRONMENT: pilot
+          TOKEN_SCOPE_ENFORCEMENT: enforce
+          CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+          AGENT_SCAN_MODE: real_toolchain
+          AGENT_MAX_CANDIDATES: "100"
+          TENCENT_EKS_CI_REGION: ${{ vars.TENCENT_EKS_CI_REGION }}
+          TENCENT_EKS_CI_VPC_ID: ${{ vars.TENCENT_EKS_CI_VPC_ID }}
+          TENCENT_EKS_CI_SUBNET_ID: ${{ vars.TENCENT_EKS_CI_SUBNET_ID }}
+          TENCENT_EKS_CI_SECURITY_GROUP_IDS: ${{ vars.TENCENT_EKS_CI_SECURITY_GROUP_IDS }}
+          TENCENT_EKS_CI_IMAGE: ${{ vars.TENCENT_EKS_CI_IMAGE }}
+          TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST: ${{ vars.TENCENT_EKS_CI_ALLOWED_REGISTRY_HOST }}
+          TENCENT_EKS_CI_AUTO_CREATE_EIP: "true"
+          TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS: ${{ vars.TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS || '5' }}
+          TENCENT_EKS_CI_EIP_ISP: ${{ vars.TENCENT_EKS_CI_EIP_ISP || 'BGP' }}
+          TENCENT_EKS_CI_DRY_RUN: "true"
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          AI_SEARCH_INSTANCE_NAME: ${{ vars.AI_SEARCH_INSTANCE_NAME }}
+          SCAN_QUEUE_NAME: ${{ vars.SCAN_QUEUE_NAME }}
+          DEADLETTER_QUEUE_NAME: ${{ vars.DEADLETTER_QUEUE_NAME }}
+        run: node scripts/render-wrangler-config.mjs config/wrangler.tencent.template.toml work/wrangler.pilot.toml
+      - run: npm run typecheck
+      - run: npx wrangler deploy --dry-run --config work/wrangler.pilot.toml
+      - name: Refresh the guarded dry-run Worker
+        run: npx wrangler deploy --config work/wrangler.pilot.toml
+      - name: Synchronize runtime secrets
+        env:
+          AGENT_TOKEN_SECRET: ${{ secrets.AGENT_TOKEN_SECRET }}
+          TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AGENT_TOKEN_SECRET TENCENT_SECRET_ID TENCENT_SECRET_KEY; do
+            test -n "${!name}" || { echo "missing protected secret: ${name}" >&2; exit 1; }
+            printf '%s' "${!name}" | npx wrangler secret put "$name" --config work/wrangler.pilot.toml
+          done
+      - name: Create the short-lived hashed Pilot token and apply the target allowlist
+        id: token
+        run: node scripts/manage-pilot-acceptance-token.mjs create
+      - name: Verify dry-run, zero instances, Provider access, Search, and idle task state
+        run: node scripts/run-pilot-acceptance.mjs preflight
+      - name: Render and deploy the approved live Provider configuration
+        id: live
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "import fs from 'node:fs';const p='work/wrangler.pilot.toml';const s=fs.readFileSync(p,'utf8');const marker='TENCENT_EKS_CI_DRY_RUN = \"true\"';if(s.split(marker).length!==2)throw new Error('expected exactly one dry-run marker');fs.writeFileSync('work/wrangler.pilot.live.toml',s.replace(marker,'TENCENT_EKS_CI_DRY_RUN = \"false\"'))"
+          npx wrangler deploy --dry-run --config work/wrangler.pilot.live.toml
+          npx wrangler deploy --config work/wrangler.pilot.live.toml
+      - name: Verify the live Queue consumer before creating the billable task
+        run: node scripts/run-pilot-acceptance.mjs verify-live-consumer
+      - name: Run the authorized real-toolchain Pilot
+        env:
+          ACCEPTANCE_MAX_WAIT_MS: "1080000"
+          ACCEPTANCE_POLL_INTERVAL_MS: "10000"
+        run: node scripts/run-pilot-acceptance.mjs run
+      - name: Restore Pilot application dry-run
+        if: always() && steps.live.outcome == 'success'
+        run: npx wrangler deploy --config work/wrangler.pilot.toml
+      - name: Verify rollback and zero Tencent instances
+        if: always() && steps.token.outcome == 'success' && steps.live.outcome == 'success'
+        run: node scripts/run-pilot-acceptance.mjs verify-dry-run
+      - name: Revoke the short-lived Pilot token
+        if: always() && steps.token.outcome == 'success'
+        run: node scripts/manage-pilot-acceptance-token.mjs revoke
+      - name: Upload the redacted acceptance report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pilot-acceptance-${{ github.run_id }}
+          path: work/pilot-acceptance.json
+          if-no-files-found: warn
+          retention-days: 30
