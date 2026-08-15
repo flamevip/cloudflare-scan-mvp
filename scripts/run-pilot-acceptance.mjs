@@ -70,6 +70,7 @@ const report = {
   provider_egress_ip: null,
   duration_seconds: null,
   asset_count: 0,
+  asset_hosts: [],
   finding_count: 0,
   artifact_count: 0,
   artifact_types: [],
@@ -179,6 +180,7 @@ console.log(JSON.stringify({
   provider_egress_ip: report.provider_egress_ip,
   duration_seconds: report.duration_seconds,
   asset_count: report.asset_count,
+  asset_hosts: report.asset_hosts,
   finding_count: report.finding_count,
   artifact_count: report.artifact_count,
   stages: report.stages.map((stage) => ({ name: stage.name, status: stage.status, duration_ms: stage.duration_ms })),
@@ -197,11 +199,16 @@ async function validateResults(targetReport) {
   const findings = findingsResponse.items ?? [];
   const artifacts = artifactsResponse.items ?? [];
   targetReport.asset_count = assets.length;
+  targetReport.asset_hosts = [...new Set(assets.map((asset) => String(asset.host ?? '').trim().toLowerCase()).filter(Boolean))].sort();
   targetReport.finding_count = findings.length;
   targetReport.artifact_count = artifacts.length;
   targetReport.artifact_types = [...new Set(artifacts.map((artifact) => artifact.type))];
   assert.ok(assets.length >= 1, 'Pilot produced no HTTP assets');
-  assert.ok(assets.some((asset) => String(asset.host ?? '').toLowerCase() === target), 'authorized root domain did not enter the httpx result set');
+  assert.ok(targetReport.asset_hosts.length >= 1, 'Pilot HTTP assets had no host');
+  assert.ok(
+    targetReport.asset_hosts.every((host) => host === target || host.endsWith(`.${target}`)),
+    'httpx result escaped authorized root scope',
+  );
   const rawArtifact = artifacts.find((artifact) => artifact.type === 'agent_real_toolchain_raw');
   assert.ok(rawArtifact, 'real toolchain raw artifact is missing');
   assert.ok(rawArtifact.search_r2_key, 'search document R2 key is missing');

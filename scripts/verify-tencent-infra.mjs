@@ -98,7 +98,8 @@ assert.match(pilotAcceptanceWorkflow, /name: Revoke the short-lived Pilot token[
 assert.match(pilotAcceptanceWorkflow, /max_cost_usd: 0\.7|ACCEPTANCE_MAX_WAIT_MS/, 'Pilot workflow must retain its bounded runtime and cost envelope');
 assert.match(pilotAcceptanceScript, /targets: \[target\][\s\S]*target_urls: \[`https:\/\/\$\{target\}:443\/`\][\s\S]*modules: \['subdomain', 'http_probe', 'nuclei'\]/);
 assert.match(pilotAcceptanceScript, /max_agents: 1[\s\S]*rate_limit: 1[\s\S]*timeout_minutes: 15[\s\S]*max_cost_usd: 0\.7/);
-assert.match(pilotAcceptanceScript, /authorized root domain did not enter the httpx result set/);
+assert.match(pilotAcceptanceScript, /targetReport\.asset_hosts\.every\(\(host\) => host === target \|\| host\.endsWith\(`\.\$\{target\}`\)\)/);
+assert.match(pilotAcceptanceScript, /httpx result escaped authorized root scope/);
 assert.match(pilotAcceptanceScript, /for \(const stageName of \['subfinder', 'httpx', 'nuclei'\]\)/);
 assert.match(pilotAcceptanceScript, /duration_seconds is missing/);
 assert.match(pilotAcceptanceScript, /independent provider egress IP was not recorded/);
