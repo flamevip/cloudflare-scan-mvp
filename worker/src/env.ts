@@ -14,6 +14,7 @@ export interface Env {
   AI_SEARCH?: AiSearchBinding;
   AI_SEARCH_ENABLED?: string;
   AI_SEARCH_LIMIT?: string;
+  AI_SEARCH_INDEXING_GRACE_SECONDS?: string;
   ENV: string;
   DEFAULT_PROJECT_ID: string;
   DEV_ADMIN_TOKEN?: string;

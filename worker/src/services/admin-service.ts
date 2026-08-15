@@ -157,19 +157,125 @@ export async function listAuditLogs(env: Env, url: URL): Promise<unknown> {
 }
 
 export async function operationsSummary(env: Env): Promise<unknown> {
-  const [tasks, runs, deadletters, cleanup] = await Promise.all([
+  const heartbeatTimeoutSeconds = boundedInteger(env.AGENT_HEARTBEAT_TIMEOUT_SECONDS, 600, 60, 24 * 60 * 60);
+  const heartbeatCutoff = `-${heartbeatTimeoutSeconds} seconds`;
+  const [tasks, recentTasks, runs, providers, signals, searchDocuments, recentIncidents] = await Promise.all([
     env.DB.prepare('SELECT status, COUNT(*) AS count FROM tasks GROUP BY status ORDER BY status').all(),
+    env.DB.prepare(`SELECT status, COUNT(*) AS count FROM tasks WHERE created_at >= datetime('now', '-24 hours') GROUP BY status ORDER BY status`).all(),
     env.DB.prepare(`SELECT status, COUNT(*) AS count FROM agent_runs WHERE created_at >= datetime('now', '-24 hours') GROUP BY status ORDER BY status`).all(),
-    env.DB.prepare(`SELECT COUNT(*) AS count FROM tasks WHERE deadletter_reason IS NOT NULL`).first<{ count: number }>(),
-    env.DB.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE provider_cleanup_completed_at IS NULL AND provider_cleanup_attempts > 0`).first<{ count: number }>(),
+    env.DB.prepare(`SELECT provider, COUNT(*) AS count FROM agent_runs WHERE created_at >= datetime('now', '-24 hours') GROUP BY provider ORDER BY provider`).all(),
+    env.DB.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM tasks WHERE deadletter_reason IS NOT NULL) AS deadlettered_tasks,
+        (SELECT COUNT(*) FROM tasks WHERE deadletter_reason IS NOT NULL AND updated_at >= datetime('now', '-24 hours')) AS deadlettered_tasks_last_24h,
+        (SELECT COUNT(*) FROM tasks
+          WHERE status IN ('pending', 'provisioning', 'retrying', 'running')
+            AND julianday('now') >= julianday(COALESCE(started_at, created_at)) + (timeout_minutes / 1440.0)) AS overdue_task_deadlines,
+        (SELECT COUNT(*) FROM agent_runs
+          WHERE status IN ('starting', 'running')
+            AND julianday(COALESCE(last_heartbeat_at, started_at, created_at)) < julianday('now', ?)) AS stale_agent_heartbeats,
+        (SELECT COUNT(*) FROM agent_runs
+          WHERE provider = 'tencent_eks_ci'
+            AND status IN ('success', 'failed', 'timeout', 'cancelled')
+            AND provider_cleanup_completed_at IS NULL) AS provider_cleanup_pending,
+        (SELECT COUNT(*) FROM agent_runs
+          WHERE provider = 'tencent_eks_ci'
+            AND provider_cleanup_completed_at IS NULL
+            AND provider_cleanup_last_error IS NOT NULL) AS provider_cleanup_failures,
+        (SELECT COUNT(*) FROM agent_runs
+          WHERE provider = 'tencent_eks_ci'
+            AND provider_cleanup_completed_at IS NULL
+            AND provider_cleanup_attempts >= 5) AS provider_cleanup_exhausted
+    `).bind(heartbeatCutoff).first<OperationsSignals>(),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS count, MAX(created_at) AS latest_created_at
+      FROM artifacts
+      WHERE search_r2_key IS NOT NULL AND created_at >= datetime('now', '-24 hours')
+    `).first<{ count: number; latest_created_at: string | null }>(),
+    env.DB.prepare(`
+      SELECT ar.id AS agent_run_id, ar.task_id, t.project_id, ar.provider, ar.status,
+        ar.error_message, ar.provider_cleanup_attempts, ar.provider_cleanup_last_error, ar.updated_at
+      FROM agent_runs ar INNER JOIN tasks t ON t.id = ar.task_id
+      WHERE ar.updated_at >= datetime('now', '-24 hours')
+        AND (ar.status IN ('failed', 'timeout') OR ar.provider_cleanup_last_error IS NOT NULL)
+      ORDER BY ar.updated_at DESC
+      LIMIT 10
+    `).all(),
   ]);
+
+  const observed: OperationsSignals = {
+    deadlettered_tasks: numberValue(signals?.deadlettered_tasks),
+    deadlettered_tasks_last_24h: numberValue(signals?.deadlettered_tasks_last_24h),
+    overdue_task_deadlines: numberValue(signals?.overdue_task_deadlines),
+    stale_agent_heartbeats: numberValue(signals?.stale_agent_heartbeats),
+    provider_cleanup_pending: numberValue(signals?.provider_cleanup_pending),
+    provider_cleanup_failures: numberValue(signals?.provider_cleanup_failures),
+    provider_cleanup_exhausted: numberValue(signals?.provider_cleanup_exhausted),
+  };
+  const alerts = buildOperationsAlerts(observed);
+  const runRows = runs.results as Array<Record<string, unknown>>;
   return {
     generated_at: nowIso(),
+    health: alerts.some((alert) => alert.severity === 'critical') ? 'critical' : alerts.length ? 'warning' : 'ok',
+    window_hours: 24,
+    thresholds: { heartbeat_timeout_seconds: heartbeatTimeoutSeconds, provider_cleanup_max_attempts: 5 },
     tasks_by_status: tasks.results,
-    agent_runs_last_24h_by_status: runs.results,
-    deadlettered_tasks: Number(deadletters?.count ?? 0),
-    provider_cleanup_failures: Number(cleanup?.count ?? 0),
+    tasks_last_24h_by_status: recentTasks.results,
+    agent_runs_last_24h_by_status: runRows,
+    agent_runs_last_24h_by_provider: providers.results,
+    agent_runs_last_24h_total: sumCounts(runRows),
+    agent_runs_last_24h_failed_or_timeout: sumCounts(runRows.filter((row) => ['failed', 'timeout'].includes(String(row.status)))),
+    deadlettered_tasks: observed.deadlettered_tasks,
+    deadlettered_tasks_last_24h: observed.deadlettered_tasks_last_24h,
+    stale_agent_heartbeats: observed.stale_agent_heartbeats,
+    overdue_task_deadlines: observed.overdue_task_deadlines,
+    provider_cleanup_pending: observed.provider_cleanup_pending,
+    provider_cleanup_failures: observed.provider_cleanup_failures,
+    provider_cleanup_exhausted: observed.provider_cleanup_exhausted,
+    search_documents_last_24h: numberValue(searchDocuments?.count),
+    latest_search_document_at: searchDocuments?.latest_created_at ?? null,
+    alerts,
+    recent_incidents: recentIncidents.results,
   };
+}
+
+interface OperationsSignals {
+  deadlettered_tasks: number;
+  deadlettered_tasks_last_24h: number;
+  overdue_task_deadlines: number;
+  stale_agent_heartbeats: number;
+  provider_cleanup_pending: number;
+  provider_cleanup_failures: number;
+  provider_cleanup_exhausted: number;
+}
+
+function buildOperationsAlerts(signals: OperationsSignals): Array<{ severity: 'warning' | 'critical'; code: string; count: number }> {
+  const alerts: Array<{ severity: 'warning' | 'critical'; code: string; count: number }> = [];
+  const add = (severity: 'warning' | 'critical', code: string, count: number) => {
+    if (count > 0) alerts.push({ severity, code, count });
+  };
+  add('critical', 'task_deadline_exceeded', signals.overdue_task_deadlines);
+  add('critical', 'provider_cleanup_exhausted', signals.provider_cleanup_exhausted);
+  add('warning', 'agent_heartbeat_stale', signals.stale_agent_heartbeats);
+  add('warning', 'provider_cleanup_failed', signals.provider_cleanup_failures);
+  add('warning', 'provider_cleanup_pending', signals.provider_cleanup_pending);
+  add('warning', 'task_deadlettered_last_24h', signals.deadlettered_tasks_last_24h);
+  return alerts;
+}
+
+function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+function numberValue(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sumCounts(rows: Array<Record<string, unknown>>): number {
+  return rows.reduce((sum, row) => sum + numberValue(row.count), 0);
 }
 
 async function insertToken(env: Env, actor: AuthContext, input: { userId: string; name: string; scopes: string[]; expiresAt: string | null; rotatedFrom: string | null; action: string }): Promise<unknown> {

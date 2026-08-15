@@ -42,7 +42,7 @@ function makeFakeDB(readerHash) {
           return this;
         },
         async first() {
-          if (sql.includes('COUNT(*) AS count FROM artifacts')) return { count: 2 };
+          if (sql.includes('MIN(created_at) AS oldest_created_at')) return { count: 2, oldest_created_at: '2026-06-14T00:00:00.000Z', latest_created_at: '2099-01-01T00:00:00.000Z', last_24h_count: 1 };
           if (sql.includes('FROM api_tokens')) {
             if (this.values[0] !== readerHash) return null;
             return { token_id: 'tok_reader', user_id: 'reader-user', token_hash: readerHash, scopes_json: '["tasks:read"]', expires_at: '2099-01-01T00:00:00.000Z', revoked_at: null, user_role: 'reader', email: 'reader@example.local' };
@@ -58,6 +58,7 @@ function makeFakeDB(readerHash) {
         },
         async all() {
           if (sql.includes('FROM project_memberships')) return { results: [{ project_id: 'project-alpha', role: 'reader' }] };
+          if (sql.includes('ORDER BY ar.created_at DESC')) return { results: [{ artifact_id: 'artifact-alpha', task_id: 'task-alpha', type: 'agent_search_doc', search_r2_key: 'tenants/default/tasks/task-alpha/search/valid.md', raw_r2_key: 'raw-alpha', created_at: '2099-01-01T00:00:00.000Z' }] };
           throw new Error(`unexpected all SQL: ${sql}`);
         },
         async run() {
@@ -74,7 +75,14 @@ const envBase = {
   DEFAULT_PROJECT_ID: 'project-default',
   AGENT_PROVIDER: 'mock',
   AI_SEARCH_LIMIT: '10',
+  AI_SEARCH_INDEXING_GRACE_SECONDS: '900',
   DB: makeFakeDB(readerHash),
+  ARTIFACTS: {
+    async get(key) {
+      if (key !== 'tenants/default/tasks/task-alpha/search/valid.md') return null;
+      return { size: 96, async text() { return '# Scan results\nTargets: 70yun.xyz\nFinding: login endpoint'; } };
+    },
+  },
 };
 const context = {
   actor_id: 'reader-user',
@@ -93,10 +101,11 @@ assert.equal(disabled.items.length, 0);
 assert.equal(disabled.error.code, 'ai_search_unconfigured');
 assert.equal(typeof disabled.metadata.duration_ms, 'number');
 
-const missingBindingValidation = configValidation.validateRuntimeConfig({ ...envBase, AI_SEARCH_ENABLED: 'true', AI_SEARCH_LIMIT: '100', AGENT_PROVIDER: 'gcp_cloud_run', TASK_MAX_RETRY: 'abc', AGENT_HEARTBEAT_TIMEOUT_SECONDS: '10' });
+const missingBindingValidation = configValidation.validateRuntimeConfig({ ...envBase, AI_SEARCH_ENABLED: 'true', AI_SEARCH_LIMIT: '100', AI_SEARCH_INDEXING_GRACE_SECONDS: '10', AGENT_PROVIDER: 'gcp_cloud_run', TASK_MAX_RETRY: 'abc', AGENT_HEARTBEAT_TIMEOUT_SECONDS: '10' });
 assert.equal(missingBindingValidation.ok, false);
 assert.ok(missingBindingValidation.errors.some((issue) => issue.code === 'ai_search_binding_missing'));
 assert.ok(missingBindingValidation.errors.some((issue) => issue.field === 'AI_SEARCH_LIMIT'));
+assert.ok(missingBindingValidation.errors.some((issue) => issue.field === 'AI_SEARCH_INDEXING_GRACE_SECONDS'));
 assert.ok(missingBindingValidation.errors.some((issue) => issue.field === 'TASK_MAX_RETRY'));
 assert.ok(missingBindingValidation.errors.some((issue) => issue.field === 'AGENT_HEARTBEAT_TIMEOUT_SECONDS'));
 assert.ok(missingBindingValidation.errors.some((issue) => issue.code === 'provider_config_missing'));
@@ -124,15 +133,32 @@ assert.equal(mixed.metadata.chunks_with_r2_key, 3);
 assert.equal(mixed.metadata.items_authorized, 1);
 assert.equal(mixed.metadata.items_returned, 1);
 assert.equal(mixed.metadata.mapping_misses, 3);
+assert.equal(mixed.metadata.fallback_used, false);
+assert.equal(mixed.metadata.indexing_state, 'searchable');
 assert.equal(mixed.items.some((item) => item.artifact_id === null), false, 'stale AI Search chunks must not bypass D1 artifact mapping');
 
-const status = await searchService.getSearchStatus(mixedEnv);
+const fallback = await searchService.searchArtifacts({
+  ...mixedEnv,
+  AI_SEARCH: { async search() { return { chunks: [] }; } },
+}, context, new URL('http://scan.local/api/search?q=70yun.xyz&task_id=task-alpha&limit=10'));
+assert.equal(fallback.degraded, false);
+assert.equal(fallback.items.length, 1);
+assert.equal(fallback.items[0].mapping, 'recent_r2_fallback');
+assert.equal(fallback.metadata.fallback_used, true);
+assert.equal(fallback.metadata.fallback_docs_checked, 1);
+assert.equal(fallback.metadata.fallback_matches, 1);
+assert.equal(fallback.metadata.indexing_state, 'recent_fallback');
+assert.equal(fallback.metadata.empty_reason, null);
+
+const status = await searchService.getSearchStatus(mixedEnv, new URL('http://scan.local/api/admin/search/status?task_id=task-alpha'));
 assert.equal(status.enabled, true);
 assert.equal(status.binding_present, true);
 assert.equal(status.limit_valid, true);
 assert.equal(status.info_ok, true);
 assert.equal(status.stats_ok, true);
 assert.equal(status.artifact_search_docs_count, 2);
+assert.equal(status.search_documents.task_id, 'task-alpha');
+assert.equal(status.search_documents.state, 'within_indexing_grace');
 
 const failingStatus = await searchService.getSearchStatus({
   ...mixedEnv,
@@ -158,10 +184,11 @@ await assert.rejects(
 
 console.log(JSON.stringify({
   ok: true,
-  cases: ['disabled degraded response', 'enabled missing binding + invalid config', 'mocked info/stats success', 'info/stats failure redaction', 'stale chunk filtered by D1 mapping', 'mixed chunk metadata', 'admin status RBAC'],
+  cases: ['disabled degraded response', 'enabled missing binding + invalid config', 'mocked info/stats success', 'info/stats failure redaction', 'stale chunk filtered by D1 mapping', 'mixed chunk metadata', 'authorized recent R2 fallback', 'task indexing readiness', 'admin status RBAC'],
   config_errors: missingBindingValidation.errors.map((issue) => ({ code: issue.code, field: issue.field })),
   status: { enabled: status.enabled, binding_present: status.binding_present, info_ok: status.info_ok, stats_ok: status.stats_ok, artifact_search_docs_count: status.artifact_search_docs_count },
   mixed_metadata: mixed.metadata,
+  fallback_metadata: fallback.metadata,
   degraded_compatibility: { degraded: disabled.degraded, items_is_array: Array.isArray(disabled.items), error_code: disabled.error.code },
   network: 'not used',
   cloud_credentials: 'not used',

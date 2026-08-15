@@ -24,6 +24,7 @@ HUNTER_QUERY_TEMPLATE = "domain=\"{domain}\""
 # AI Search is optional and disabled locally by default. To enable, configure a Cloudflare AI Search binding named AI_SEARCH and set AI_SEARCH_ENABLED=true.
 AI_SEARCH_ENABLED = "false"
 AI_SEARCH_LIMIT = "10"
+AI_SEARCH_INDEXING_GRACE_SECONDS = "900"
 # AI Search instance indexes R2 search docs under tenants/default/tasks/**/search/**/*.md.
 # Create with: wrangler ai-search create scan-artifacts-search --type r2 --source scan-artifacts-dev ...
 # Auto provider routing. "region" routes .cn targets to Aliyun and others to the default provider; "lowest_cost" picks the cheapest configured provider.

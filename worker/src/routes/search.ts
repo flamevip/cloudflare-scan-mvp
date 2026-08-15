@@ -7,7 +7,7 @@ export async function handleSearch(request: Request, env: Env, url: URL, path: s
   if (path === '/api/admin/search/status') {
     await requireAdminContext(request, env);
     if (request.method !== 'GET') throw new HttpError(405, 'method not allowed');
-    return ok(await getSearchStatus(env));
+    return ok(await getSearchStatus(env, url));
   }
 
   if (path !== '/api/search') return null;
