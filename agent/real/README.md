@@ -37,6 +37,7 @@ Safety defaults for `real_toolchain`:
 - The authorized root target is always retained as both an HTTPS and HTTP candidate, even when `subfinder` returns no subdomains or optional candidates are present.
 - Candidate merge revalidates every candidate host against authorized root domains from `/api/agent/targets`.
 - DNS safety filtering deduplicates hosts, uses at most five concurrent lookups, caps each lookup at five seconds and the full filter at 45 seconds, and rejects unresolved or timed-out hosts by default.
+- Required startup inputs are downloaded sequentially with at most three short retries for transient GET/network failures; mutating callback POSTs are never automatically replayed.
 - `nuclei` uses severities `info,low,medium,high,critical`, excludes tags `dos,bruteforce,brute-force,fuzz,fuzzing,intrusive,destructive`, and runs a fixed low-impact Pilot profile from the baked template commit (security headers, robots/sitemap, technology/WAF detection, and deprecated TLS).
 - Stage budgets are fixed at 1 minute for subfinder, 2 minutes for httpx, and 4 minutes for nuclei, with the remaining task time reserved for provisioning, ingest, terminal callbacks, and cleanup. A stage budget expiry is recorded as `partial_timeout`; the Agent keeps the partial stdout/stderr and continues with safe root-domain candidates.
 - Rate and process timeout come from Worker-injected `RATE_LIMIT` and `TIMEOUT_MINUTES`.

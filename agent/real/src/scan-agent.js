@@ -28,6 +28,8 @@ const STAGE_TIMEOUT_MS = {
 const DNS_FILTER_BUDGET_MS = 45_000;
 const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 const DNS_FILTER_CONCURRENCY = 5;
+const INPUT_FETCH_MAX_ATTEMPTS = 3;
+const INPUT_FETCH_RETRY_BASE_MS = 250;
 const FORBIDDEN_ADDRESSES = buildForbiddenAddressList();
 const IPV4_MAPPED_ADDRESSES = buildIpv4MappedAddressList();
 
@@ -50,11 +52,9 @@ export async function runAgent(env = readEnv()) {
   const heartbeat = startHeartbeatLoop(env);
   try {
     await heartbeat.send({ phase: 'starting' });
-    const [config, targetsText, candidatesText] = await Promise.all([
-      getJson(env, '/api/agent/config'),
-      getText(env, '/api/agent/targets'),
-      getOptionalText(env, '/api/agent/candidates'),
-    ]);
+    const config = await getJson(env, '/api/agent/config');
+    const targetsText = await getText(env, '/api/agent/targets');
+    const candidatesText = await getOptionalText(env, '/api/agent/candidates');
     const targets = parseLines(targetsText);
     if (targets.length === 0) throw new Error('no targets downloaded');
     const modules = resolveModules(env, config);
@@ -688,7 +688,31 @@ async function callback(env, path, body) {
   return text;
 }
 
-async function authedFetch(env, path, init = {}) {
+export async function authedFetch(env, path, init = {}, retryPolicy = {}) {
+  const method = String(init.method ?? 'GET').toUpperCase();
+  const maxAttempts = method === 'GET'
+    ? clampNumber(retryPolicy.maxGetAttempts, INPUT_FETCH_MAX_ATTEMPTS, 1, INPUT_FETCH_MAX_ATTEMPTS)
+    : 1;
+  const retryBaseMs = clampNumber(retryPolicy.baseDelayMs, INPUT_FETCH_RETRY_BASE_MS, 1, INPUT_FETCH_RETRY_BASE_MS);
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await authedFetchOnce(env, path, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableFetchError(error)) throw error;
+      const backoffMs = retryBaseMs * (2 ** (attempt - 1));
+      const availableMs = remainingMs(env) - 1_000;
+      if (availableMs <= 0) throw error;
+      const waitMs = Math.min(backoffMs, availableMs);
+      writeErr(`${path} transient GET failure; retrying attempt ${attempt + 1}/${maxAttempts} after ${waitMs}ms: ${error instanceof Error ? error.message : String(error)}\n`);
+      await sleep(waitMs);
+    }
+  }
+  throw lastError;
+}
+
+async function authedFetchOnce(env, path, init) {
   const headers = new Headers(init.headers ?? {});
   headers.set('Authorization', `Bearer ${env.CALLBACK_TOKEN}`);
   const controller = new AbortController();
@@ -696,11 +720,24 @@ async function authedFetch(env, path, init = {}) {
   const timeout = setTimeout(() => controller.abort(), Math.max(1, Math.min(30_000, deadlineCap)));
   try {
     const response = await fetch(resolveAgentUrl(env, path), { ...init, headers, signal: controller.signal });
-    if (!response.ok) throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) {
+      const error = new Error(`${path} failed: ${response.status} ${await response.text()}`);
+      error.httpStatus = response.status;
+      throw error;
+    }
     return response;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isRetryableFetchError(error) {
+  const status = Number(error?.httpStatus);
+  return !Number.isFinite(status) || status === 429 || status >= 500;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolveAgentUrl(env, path) {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  authedFetch,
   buildIngestResult,
   filterSafeCandidates,
   isForbiddenIp,
@@ -50,6 +51,35 @@ const dnsTimedOut = await filterSafeCandidates([{ url: 'https://slow.example.com
 assert.deepEqual(dnsTimedOut, []);
 assert.ok(Date.now() - dnsTimeoutStarted < 500, 'DNS lookup timeout must not stall the Agent');
 assert.equal(exactUrlCandidates[2].scheme, 'http');
+
+const originalFetch = globalThis.fetch;
+try {
+  const fetchEnv = {
+    CALLBACK_BASE_URL: 'https://callback.example.test',
+    CALLBACK_TOKEN: 'fixture-token',
+    DEADLINE_AT: Date.now() + 60_000,
+    TIMEOUT_MINUTES: 1,
+  };
+  let getAttempts = 0;
+  globalThis.fetch = async () => {
+    getAttempts += 1;
+    if (getAttempts < 3) throw new TypeError('fixture transient fetch failure');
+    return new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const retriedGet = await authedFetch(fetchEnv, '/api/agent/config', {}, { maxGetAttempts: 3, baseDelayMs: 1 });
+  assert.equal(retriedGet.status, 200);
+  assert.equal(getAttempts, 3, 'idempotent GET input download must retry transient network failures');
+
+  let postAttempts = 0;
+  globalThis.fetch = async () => {
+    postAttempts += 1;
+    throw new TypeError('fixture POST failure');
+  };
+  await assert.rejects(() => authedFetch(fetchEnv, '/api/agent/ingest', { method: 'POST' }, { baseDelayMs: 1 }), /fixture POST failure/);
+  assert.equal(postAttempts, 1, 'mutating callback POSTs must not be automatically replayed');
+} finally {
+  globalThis.fetch = originalFetch;
+}
 
 const httpxJsonl = [
   JSON.stringify({ url: 'https://api.example.com/login', title: 'API Login', status_code: 200, tech: ['nginx', 'node'] }),
@@ -124,6 +154,7 @@ assert.ok(
 );
 assert.match(agentSource, /if \(!waitForSlot\) return;/, 'periodic heartbeats must be skipped instead of overlapping');
 assert.match(agentSource, /DNS_FILTER_BUDGET_MS = 45_000[\s\S]*DNS_LOOKUP_TIMEOUT_MS = 5_000[\s\S]*DNS_FILTER_CONCURRENCY = 5/, 'DNS filtering must be bounded and concurrent');
+assert.match(agentSource, /INPUT_FETCH_MAX_ATTEMPTS = 3[\s\S]*const config = await getJson[\s\S]*const targetsText = await getText[\s\S]*const candidatesText = await getOptionalText/, 'required startup inputs must be downloaded sequentially with bounded retries');
 assert.match(agentSource, /custom Nuclei template paths are disabled/, 'runtime template-path overrides must be rejected');
 assert.match(agentSource, /'subfinder', \['-silent', '-all', '-rl', String\(env\.RATE_LIMIT\), '-max-time', '1'/, 'subfinder must honor the task rate limit and bounded enumeration time');
 assert.match(agentSource, /'-follow-host-redirects',[\s\S]*'-rate-limit', String\(env\.RATE_LIMIT\)/, 'httpx must honor the task rate limit');
