@@ -158,10 +158,11 @@ Setup notes:
 ```text
 AI_SEARCH_ENABLED=false
 AI_SEARCH_LIMIT=10
+AI_SEARCH_INDEXING_GRACE_SECONDS=900
 # Configure a Cloudflare AI Search binding named AI_SEARCH in wrangler.toml when available.
 ```
 
-Search docs are stored in R2 with custom metadata (`task_id`, `shard_id`, `agent_run_id`, `artifact_type`, `search_doc=true`) to support R2-backed AI Search indexing. Returned chunks are filtered by project/task access; unauthorized R2 keys are dropped.
+Search docs are stored in R2 with custom metadata (`task_id`, `shard_id`, `agent_run_id`, `artifact_type`, `search_doc=true`) to support R2-backed AI Search indexing. Returned chunks are filtered by project/task access; unauthorized R2 keys are dropped. When a caller supplies `task_id`, the task already has D1 search artifacts, and AI Search has not returned an authorized match yet, the Worker performs an immediate, bounded keyword fallback over at most five recent R2 search documents (maximum 512 KiB each). This fallback happens only after the normal task/project authorization check and is identified by `mapping=recent_r2_fallback`.
 
 ## Retry and timeout convergence
 
@@ -567,7 +568,9 @@ Token 支持 `expires_at`、`revoked_at`、`last_used_at` 和 `scopes_json`。�
 
 ### AI Search diagnostics
 
-`GET /api/admin/search/status` 返回非敏感诊断：enabled/binding 状态、limit 有效性、info/stats 调用结果、search doc 数量和 config validation。`/api/search` 保持原有 degraded response 兼容，同时增加 `metadata`：duration、chunks_seen、chunks_with_r2_key、mapping_misses、items_authorized、items_returned。真实 AI Search binding/index 仍需在 Cloudflare 账号中 live smoke test。
+`GET /api/admin/search/status` 返回非敏感诊断：enabled/binding 状态、limit 有效性、info/stats 调用结果、search doc 数量、最新文档年龄和 config validation。可传入 `task_id` 查看指定任务处于 `no_documents`、`within_indexing_grace` 或 `indexing_grace_elapsed`。`/api/search` 保持原有 degraded response 兼容，同时增加索引状态、空结果原因以及近期 R2 fallback 统计。`AI_SEARCH_INDEXING_GRACE_SECONDS` 默认 900 秒，仅用于诊断分类，不会延迟 API 响应。
+
+`GET /api/admin/operations/summary` 保留原有字段，并增加最近 24 小时任务/Agent/Provider 分布、心跳过期、任务总时限超期、腾讯实例清理待处理/失败/重试耗尽、搜索文档和最近异常列表。`health` 为 `ok`、`warning` 或 `critical`，`alerts` 给出可用于外部告警的稳定 code 和数量。
 
 ### Provider preflight and retry classification
 

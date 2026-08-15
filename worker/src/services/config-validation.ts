@@ -24,6 +24,7 @@ export function validateRuntimeConfig(env: Env): RuntimeConfigValidation {
     issues.push(errorIssue('ai_search_binding_missing', 'AI_SEARCH', 'AI_SEARCH_ENABLED is true but the AI_SEARCH binding is not configured'));
   }
   validateInteger(env.AI_SEARCH_LIMIT, 'AI_SEARCH_LIMIT', 1, 20, issues);
+  validateInteger(env.AI_SEARCH_INDEXING_GRACE_SECONDS, 'AI_SEARCH_INDEXING_GRACE_SECONDS', 30, 24 * 60 * 60, issues);
   validateInteger(env.TASK_MAX_RETRY, 'TASK_MAX_RETRY', 0, 5, issues);
   validateInteger(env.AGENT_HEARTBEAT_TIMEOUT_SECONDS, 'AGENT_HEARTBEAT_TIMEOUT_SECONDS', 60, 24 * 60 * 60, issues);
   validateInteger(env.AGENT_HEARTBEAT_INTERVAL_SECONDS, 'AGENT_HEARTBEAT_INTERVAL_SECONDS', 5, 300, issues);

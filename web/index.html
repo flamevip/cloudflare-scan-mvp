@@ -307,13 +307,25 @@
       els.searchResults.innerHTML = '<p class="muted">Loading...</p>';
       try {
         const res = await api(`/api/search?${params.toString()}`);
+        const metadata = res.data.metadata || {};
+        const items = res.data.items || [];
         if (res.data.degraded) {
           els.searchStatus.textContent = `Degraded: ${res.data.error?.message || 'AI Search unavailable'}（索引或 binding 未就绪时为预期状态）`;
+        } else if (metadata.fallback_matches > 0) {
+          els.searchStatus.textContent = `完成：${items.length} 条结果。AI Search 索引尚未返回匹配，已安全回退到最近的 R2 搜索文档。`;
+        } else if (items.length === 0) {
+          const reasons = {
+            no_search_documents: '该任务尚未生成搜索文档。',
+            indexing_in_progress: '搜索文档已入库，仍处于预计索引等待窗口。',
+            chunks_unmapped_or_unauthorized: '索引返回的分块无法映射到当前可访问的 D1 产物。',
+            no_matching_documents_or_index_stalled: '没有匹配内容，或索引已超过预计等待时间。',
+          };
+          els.searchStatus.textContent = `完成：0 条结果。${reasons[metadata.empty_reason] || '没有匹配内容。'}`;
         } else {
-          els.searchStatus.textContent = `完成：${(res.data.items || []).length} 条结果。若为空，可能仍在索引或没有匹配内容。`;
+          els.searchStatus.textContent = `完成：${items.length} 条 AI Search 结果。`;
         }
-        const items = res.data.items || [];
-        els.searchResults.innerHTML = items.length ? table(['task', 'artifact', 'type', 'score', 'snippet'], items.map((item) => ({
+        els.searchResults.innerHTML = items.length ? table(['source', 'task', 'artifact', 'type', 'score', 'snippet'], items.map((item) => ({
+          source: item.mapping === 'recent_r2_fallback' ? 'R2 fallback' : 'AI Search',
           task: escapeHtml(item.task_id || ''),
           artifact: escapeHtml(item.artifact_id || ''),
           type: escapeHtml(item.type || ''),
@@ -345,7 +357,10 @@
     }
 
     async function loadSearchStatus() {
-      const res = await api('/api/admin/search/status');
+      const taskId = els.searchTaskId.value.trim() || selectedTaskId || '';
+      const params = new URLSearchParams();
+      if (taskId) params.set('task_id', taskId);
+      const res = await api(`/api/admin/search/status${params.size ? `?${params.toString()}` : ''}`);
       els.operationsOutput.textContent = JSON.stringify(res.data, null, 2);
     }
 
