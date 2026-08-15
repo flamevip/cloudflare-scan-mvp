@@ -63,6 +63,13 @@ export async function runAgent(env = readEnv()) {
     });
 
     await heartbeat.stop();
+    if (result.outcome?.status === 'failed') {
+      const message = result.outcome.reason || 'real toolchain did not produce a usable scan result';
+      await callback(env, '/api/agent/fail', basePayload(env, { exit_code: 1, error_message: message }));
+      writeErr(`scan-agent failed task ${env.TASK_ID} mode=${env.SCAN_MODE}: ${message}\n`);
+      if (isMain()) process.exitCode = 1;
+      return result;
+    }
     await callback(env, '/api/agent/complete', basePayload(env, { exit_code: 0 }));
     writeOut(`scan-agent completed task ${env.TASK_ID} mode=${env.SCAN_MODE} assets=${result.assets.length} findings=${result.findings.length}\n`);
     return result;
@@ -131,27 +138,54 @@ async function runRealToolchainMode(env, targets, initialCandidates, modules) {
 
   const workdir = await mkdtemp(join(tmpdir(), 'scan-agent-'));
   try {
+    const stages = [];
     let candidates = await filterSafeCandidates([...initialCandidates].slice(0, env.MAX_CANDIDATES));
     if (modules.includes('subdomain')) {
-      const discovered = await runSubfinder(env, workdir, targets);
-      candidates = await filterSafeCandidates(mergeCandidates(targets, [...candidates.map((candidate) => candidate.url), ...discovered].join('\n')).slice(0, env.MAX_CANDIDATES));
+      const subfinder = await runSubfinder(env, workdir, targets);
+      stages.push(subfinder.stage);
+      candidates = await filterSafeCandidates(mergeCandidates(targets, [...candidates.map((candidate) => candidate.url), ...subfinder.candidates].join('\n')).slice(0, env.MAX_CANDIDATES));
+    } else {
+      stages.push(skippedStage('subfinder', 'skipped_not_requested', targets.length, 'subdomain module was not requested'));
     }
     let httpxJsonl = '';
     let assets = [];
     if (modules.includes('http_probe')) {
-      httpxJsonl = await runHttpx(env, workdir, candidates);
-      assets = parseHttpxJsonl(httpxJsonl, targets);
+      if (candidates.length === 0) {
+        stages.push(skippedStage('httpx', 'failed_no_candidates', 0, 'no DNS-safe authorized candidates were available'));
+      } else {
+        const httpx = await runHttpx(env, workdir, candidates);
+        httpxJsonl = httpx.stdout;
+        assets = parseHttpxJsonl(httpxJsonl, targets);
+        httpx.stage.output_count = assets.length;
+        if (httpx.stage.status === 'completed' && assets.length === 0) {
+          httpx.stage.status = 'failed_no_reachable_urls';
+          httpx.stage.error = 'httpx completed without finding a reachable authorized URL';
+        }
+        stages.push(httpx.stage);
+      }
     } else {
       assets = candidates.map(candidateToAsset);
+      stages.push(skippedStage('httpx', 'skipped_not_requested', candidates.length, 'http_probe module was not requested'));
     }
 
     let nucleiJsonl = '';
     let findings = [];
     if (modules.includes('nuclei') && assets.length > 0) {
-      nucleiJsonl = await runNuclei(env, workdir, assets.map((asset) => asset.url).filter(Boolean));
+      const nuclei = await runNuclei(env, workdir, assets.map((asset) => asset.url).filter(Boolean));
+      nucleiJsonl = nuclei.stdout;
       findings = parseNucleiJsonl(nucleiJsonl, targets);
+      nuclei.stage.output_count = findings.length;
+      stages.push(nuclei.stage);
+    } else if (modules.includes('nuclei')) {
+      stages.push(skippedStage('nuclei', 'skipped_no_urls', 0, 'no reachable authorized URLs were available'));
+    } else {
+      stages.push(skippedStage('nuclei', 'skipped_not_requested', 0, 'nuclei module was not requested'));
     }
-    return buildIngestResult({ mode: 'real_toolchain', modules, targets, httpxJsonl, nucleiJsonl, assets, findings });
+    const failedStages = stages.filter((stage) => stage.status.startsWith('failed'));
+    const outcome = failedStages.length
+      ? { status: 'failed', reason: failedStages.map((stage) => `${stage.name}: ${stage.error || stage.status}`).join('; ') }
+      : { status: 'completed', reason: null };
+    return buildIngestResult({ mode: 'real_toolchain', modules, targets, httpxJsonl, nucleiJsonl, assets, findings, stages, outcome });
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }
@@ -179,14 +213,43 @@ async function fetchProbe(env, candidate) {
 }
 
 async function runSubfinder(env, workdir, targets) {
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
   const output = [];
+  const stdout = [];
+  const stderr = [];
+  let exitCode = 0;
+  let error = null;
   for (const target of targets) {
     assertWithinDeadline(env);
     const result = await runCommand('subfinder', ['-silent', '-all', '-rl', String(env.RATE_LIMIT), '-d', target], { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
+    stdout.push(result.stdout);
+    stderr.push(result.stderr);
     output.push(...parseLines(result.stdout));
+    if (!result.ok) {
+      exitCode = result.exit_code;
+      error = result.error;
+      break;
+    }
     if (output.length >= env.MAX_CANDIDATES) break;
   }
-  return output.slice(0, env.MAX_CANDIDATES);
+  const candidates = output.slice(0, env.MAX_CANDIDATES);
+  return {
+    candidates,
+    stage: {
+      name: 'subfinder',
+      status: error ? 'failed' : 'completed',
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      duration_ms: Math.max(0, Date.now() - startedMs),
+      input_count: targets.length,
+      output_count: candidates.length,
+      exit_code: exitCode,
+      stdout: stdout.join(''),
+      stderr: stderr.join(''),
+      error,
+    },
+  };
 }
 
 async function runHttpx(env, workdir, candidates) {
@@ -200,7 +263,7 @@ async function runHttpx(env, workdir, candidates) {
     '-timeout', String(Math.max(1, Math.min(30, Math.floor(env.HTTP_TIMEOUT_MS / 1000)))),
     '-l', inputFile,
   ], { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
-  return result.stdout;
+  return { stdout: result.stdout, stage: commandStage('httpx', result, candidates.length) };
 }
 
 async function runNuclei(env, workdir, urls) {
@@ -218,7 +281,7 @@ async function runNuclei(env, workdir, urls) {
   ];
   if (env.NUCLEI_TEMPLATES) args.push('-templates', env.NUCLEI_TEMPLATES);
   const result = await runCommand('nuclei', args, { cwd: workdir, timeoutMs: Math.min(env.TOOL_TIMEOUT_MS, remainingMs(env)) });
-  return result.stdout;
+  return { stdout: result.stdout, stage: commandStage('nuclei', result, urls.length) };
 }
 
 async function filterSafeCandidates(candidates) {
@@ -267,9 +330,12 @@ function buildIpv4MappedAddressList() {
 }
 
 export function mergeCandidates(targets, candidateText) {
+  const roots = targets.flatMap((target) => [
+    normalizeCandidate(`https://${target}`, targets),
+    normalizeCandidate(`http://${target}`, targets),
+  ]).filter(Boolean);
   const downloaded = dedupeCandidates(parseLines(candidateText || '').map((line) => normalizeCandidate(line, targets)).filter(Boolean));
-  if (downloaded.length) return downloaded;
-  return dedupeCandidates(targets.map((target) => normalizeCandidate(`https://${target}`, targets)).filter(Boolean));
+  return dedupeCandidates([...roots, ...downloaded]);
 }
 
 function dedupeCandidates(candidates) {
@@ -346,17 +412,20 @@ export function parseNucleiJsonl(jsonl, targets) {
   return dedupeBy(findings, (finding) => finding.unique_key);
 }
 
-export function buildIngestResult({ mode, modules, targets, httpxJsonl, nucleiJsonl, assets, findings }) {
+export function buildIngestResult({ mode, modules, targets, httpxJsonl, nucleiJsonl, assets, findings, stages = [], outcome = { status: 'completed', reason: null } }) {
   const toolchainMetadata = collectToolchainMetadata();
   const rawContent = [
     JSON.stringify({ source: 'scan-agent-toolchain', toolchain_metadata: toolchainMetadata }),
+    ...stages.map((stage) => JSON.stringify({ source: 'tool-stage', ...stage })),
     httpxJsonl ? `{"source":"httpx"}\n${httpxJsonl}` : '',
     nucleiJsonl ? `{"source":"nuclei"}\n${nucleiJsonl}` : '',
   ].filter(Boolean).join('\n');
-  const searchContent = buildSearchMarkdown({ mode, modules, targets, assets, findings, toolchainMetadata });
+  const searchContent = buildSearchMarkdown({ mode, modules, targets, assets, findings, toolchainMetadata, stages, outcome });
   return {
     assets,
     findings,
+    stages,
+    outcome,
     artifacts: [{
       type: mode === 'real_toolchain' ? 'agent_real_toolchain_raw' : mode === 'http_probe' ? 'http_probe_raw' : 'agent_mock_raw',
       raw_content: rawContent || assets.map((asset) => JSON.stringify(asset)).join('\n') + (assets.length ? '\n' : ''),
@@ -368,8 +437,11 @@ export function buildIngestResult({ mode, modules, targets, httpxJsonl, nucleiJs
   };
 }
 
-function buildSearchMarkdown({ mode, modules, targets, assets, findings, toolchainMetadata }) {
-  const lines = [`# Scan agent results`, '', `Mode: ${mode}`, `Modules: ${modules.join(', ')}`, `Targets: ${targets.join(', ')}`, `Toolchain: ${JSON.stringify(toolchainMetadata)}`, ''];
+function buildSearchMarkdown({ mode, modules, targets, assets, findings, toolchainMetadata, stages, outcome }) {
+  const lines = [`# Scan agent results`, '', `Mode: ${mode}`, `Modules: ${modules.join(', ')}`, `Targets: ${targets.join(', ')}`, `Outcome: ${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ''}`, `Toolchain: ${JSON.stringify(toolchainMetadata)}`, ''];
+  for (const stage of stages) {
+    lines.push(`## Stage ${stage.name}`, '', `Status: ${stage.status}`, `Exit code: ${stage.exit_code ?? ''}`, `Duration ms: ${stage.duration_ms}`, `Input count: ${stage.input_count}`, `Output count: ${stage.output_count}`, `Skip reason: ${stage.skip_reason ?? ''}`, `Error: ${stage.error ?? ''}`, '');
+  }
   for (const asset of assets) {
     lines.push(`## Asset ${asset.host}`, '', `URL: ${asset.url ?? ''}`, `Status: ${asset.status_code ?? ''}`, `Title: ${asset.title ?? ''}`, `Technologies: ${(asset.technologies ?? []).join(', ')}`, '');
   }
@@ -614,30 +686,89 @@ async function binaryExists(binary) {
 }
 
 function runCommand(command, args, options) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
+    const startedAt = new Date().toISOString();
+    const startedMs = Date.now();
     const child = spawn(command, args, { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let spawnError = null;
+    let forceKill;
     const timeout = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGTERM');
-      const forceKill = setTimeout(() => child.kill('SIGKILL'), 2000);
+      forceKill = setTimeout(() => child.kill('SIGKILL'), 2000);
       forceKill.unref?.();
-      reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
     }, options.timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
+      spawnError = error;
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timeout);
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`${command} exited ${code}: ${truncate(stderr || stdout)}`));
+      if (forceKill) clearTimeout(forceKill);
+      const exitCode = Number.isInteger(code) ? code : null;
+      const error = spawnError
+        ? `${command} failed to start: ${spawnError.message}`
+        : timedOut
+          ? `${command} timed out after ${options.timeoutMs}ms`
+          : exitCode === 0
+            ? null
+            : `${command} exited ${exitCode ?? signal ?? 'unknown'}: ${truncate(stderr || stdout)}`;
+      resolve({
+        ok: error === null,
+        stdout,
+        stderr,
+        exit_code: exitCode,
+        signal: signal ?? null,
+        timed_out: timedOut,
+        error,
+        started_at: startedAt,
+        finished_at: new Date().toISOString(),
+        duration_ms: Math.max(0, Date.now() - startedMs),
+      });
     });
   });
+}
+
+function commandStage(name, result, inputCount) {
+  return {
+    name,
+    status: result.ok ? 'completed' : 'failed',
+    started_at: result.started_at,
+    finished_at: result.finished_at,
+    duration_ms: result.duration_ms,
+    input_count: inputCount,
+    output_count: 0,
+    exit_code: result.exit_code,
+    signal: result.signal,
+    timed_out: result.timed_out,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    error: result.error,
+  };
+}
+
+function skippedStage(name, status, inputCount, reason) {
+  const now = new Date().toISOString();
+  return {
+    name,
+    status,
+    started_at: now,
+    finished_at: now,
+    duration_ms: 0,
+    input_count: inputCount,
+    output_count: 0,
+    exit_code: null,
+    stdout: '',
+    stderr: '',
+    skip_reason: reason,
+    error: status.startsWith('failed') ? reason : null,
+  };
 }
 
 function parseJsonl(jsonl) {

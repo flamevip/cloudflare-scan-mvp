@@ -30,10 +30,12 @@ export async function markCompleted(env: Env, taskId: string, shardId: string, a
   const now = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(`
-      UPDATE agent_runs SET status = 'success', exit_code = 0, finished_at = COALESCE(finished_at, ?), updated_at = ?
+      UPDATE agent_runs SET status = 'success', exit_code = 0,
+        duration_seconds = COALESCE(duration_seconds, CAST(MAX(0, (julianday(?) - julianday(COALESCE(started_at, created_at))) * 86400) AS INTEGER)),
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status IN ('starting', 'running')
         AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status NOT IN ${TASK_TERMINAL})
-    `).bind(now, now, agentRunId, taskId, taskId),
+    `).bind(now, now, now, agentRunId, taskId, taskId),
     env.DB.prepare(`
       UPDATE task_shards SET status = 'success', finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status NOT IN ${SHARD_TERMINAL}
@@ -53,10 +55,12 @@ export async function markFailed(env: Env, taskId: string, shardId: string, agen
   const now = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(`
-      UPDATE agent_runs SET status = 'failed', error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
+      UPDATE agent_runs SET status = 'failed', exit_code = 1, error_message = ?,
+        duration_seconds = COALESCE(duration_seconds, CAST(MAX(0, (julianday(?) - julianday(COALESCE(started_at, created_at))) * 86400) AS INTEGER)),
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status IN ('starting', 'running')
         AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status NOT IN ${TASK_TERMINAL})
-    `).bind(message, now, now, agentRunId, taskId, taskId),
+    `).bind(message, now, now, now, agentRunId, taskId, taskId),
     env.DB.prepare(`
       UPDATE task_shards SET status = 'failed', error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status NOT IN ${SHARD_TERMINAL}
@@ -75,10 +79,12 @@ export async function markRetrying(env: Env, taskId: string, shardId: string, ag
   const now = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(`
-      UPDATE agent_runs SET status = 'failed', retryable = 1, error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
+      UPDATE agent_runs SET status = 'failed', retryable = 1, exit_code = 1, error_message = ?,
+        duration_seconds = COALESCE(duration_seconds, CAST(MAX(0, (julianday(?) - julianday(COALESCE(started_at, created_at))) * 86400) AS INTEGER)),
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status IN ('starting', 'running')
         AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status NOT IN ${TASK_TERMINAL})
-    `).bind(message, now, now, agentRunId, taskId, taskId),
+    `).bind(message, now, now, now, agentRunId, taskId, taskId),
     env.DB.prepare(`
       UPDATE task_shards SET status = 'failed', error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status NOT IN ${SHARD_TERMINAL}
@@ -97,10 +103,12 @@ export async function markTimedOut(env: Env, taskId: string, shardId: string, ag
   const now = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(`
-      UPDATE agent_runs SET status = 'timeout', timeout_at = ?, error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
+      UPDATE agent_runs SET status = 'timeout', exit_code = 124, timeout_at = ?, error_message = ?,
+        duration_seconds = COALESCE(duration_seconds, CAST(MAX(0, (julianday(?) - julianday(COALESCE(started_at, created_at))) * 86400) AS INTEGER)),
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status IN ('starting', 'running')
         AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status NOT IN ${TASK_TERMINAL})
-    `).bind(now, message, now, now, agentRunId, taskId, taskId),
+    `).bind(now, message, now, now, now, agentRunId, taskId, taskId),
     env.DB.prepare(`
       UPDATE task_shards SET status = 'timeout', error_message = ?, deadletter_reason = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE id = ? AND task_id = ? AND status NOT IN ${SHARD_TERMINAL}

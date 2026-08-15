@@ -162,6 +162,7 @@ Worker 会拒绝非单目标、缺少固定模块、Hunter/外部来源、速率
 - 生成 subfinder/httpx/nuclei 原始工具链产物和搜索文档；
 - 产物能由有 `artifacts:read` 的项目成员下载；
 - 搜索只能由有 `search:read` 的成员查询，陈旧 AI Search chunk 因无 D1 artifact 映射而被过滤；
+- staging 和 pilot AI Search 的 R2 路径过滤器都必须设置包含规则 `**/search/**/*.md`，禁止 raw JSONL、任务配置和目标清单进入索引；
 - finding 可以为 0，但工具链原始产物和搜索文档不能为空；
 - 腾讯实例完成清理，无遗留 `eksci-*`。
 
