@@ -87,7 +87,10 @@ assert.match(stagingRegistryDiagnosticScript, /tencent_instance_count_after/);
 
 assert.match(pilotAcceptanceWorkflow, /environment: pilot/);
 assert.match(pilotAcceptanceWorkflow, /group: pilot-live-acceptance/);
-assert.match(pilotAcceptanceWorkflow, /PILOT_ADMIN_TOKEN: \$\{\{ secrets\.PILOT_ACCEPTANCE_ADMIN_TOKEN \}\}/);
+assert.match(pilotAcceptanceWorkflow, /randomBytes\(32\)\.toString\('base64url'\)/);
+assert.match(pilotAcceptanceWorkflow, /::add-mask::\$\{token\}/);
+assert.match(pilotAcceptanceWorkflow, /PILOT_ADMIN_TOKEN=%s\\n/);
+assert.doesNotMatch(pilotAcceptanceWorkflow, /secrets\.PILOT_ACCEPTANCE_ADMIN_TOKEN/);
 assert.match(pilotAcceptanceWorkflow, /test "\$PILOT_TARGET" = "70yun\.xyz"/);
 assert.match(pilotAcceptanceWorkflow, /name: Restore Pilot application dry-run[\s\S]*if: always\(\)/);
 assert.match(pilotAcceptanceWorkflow, /name: Verify rollback and zero Tencent instances[\s\S]*if: always\(\)/);

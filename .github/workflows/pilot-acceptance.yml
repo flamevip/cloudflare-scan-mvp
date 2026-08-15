@@ -29,7 +29,6 @@ jobs:
       PILOT_TARGET: ${{ inputs.target }}
       APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
       PILOT_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
-      PILOT_ADMIN_TOKEN: ${{ secrets.PILOT_ACCEPTANCE_ADMIN_TOKEN }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
@@ -42,6 +41,13 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Generate a per-run 256-bit masked Pilot token
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(node -e "const {randomBytes}=require('node:crypto');process.stdout.write('scan_'+randomBytes(32).toString('base64url'))")"
+          echo "::add-mask::${token}"
+          printf 'PILOT_ADMIN_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
       - name: Validate the fixed authorization envelope
         shell: bash
         run: |
