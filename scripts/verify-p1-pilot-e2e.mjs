@@ -71,6 +71,8 @@ try {
   assert.equal(detail.status, 'completed');
   assert.equal(Number(detail.asset_count), 1);
   assert.equal(Number(detail.artifact_count), 1);
+  const completedRuns = await api(`/api/tasks/${task.task_id}/agent-runs`, createdToken.token);
+  assert.ok(Number.isInteger(Number(completedRuns.items[0].duration_seconds)) && Number(completedRuns.items[0].duration_seconds) >= 0, 'completed Agent run must persist duration_seconds');
 
   const artifacts = await api(`/api/artifacts?task_id=${task.task_id}`, createdToken.token);
   assert.equal(artifacts.items.length, 1);
@@ -115,6 +117,7 @@ try {
   assert.equal((await api(`/api/tasks/${cancellable.task_id}`, admin)).status, 'cancelled');
   const cancelledRuns = await api(`/api/tasks/${cancellable.task_id}/agent-runs`, admin);
   assert.equal(cancelledRuns.items[0].status, 'cancelled');
+  assert.ok(Number.isInteger(Number(cancelledRuns.items[0].duration_seconds)) && Number(cancelledRuns.items[0].duration_seconds) >= 0, 'cancelled Agent run must persist duration_seconds');
   assert.equal(JSON.stringify(cancelledRuns).includes('callback_token'), false);
 
   console.log(JSON.stringify({
@@ -128,6 +131,7 @@ try {
     cross_project_denial_audited: true,
     scope_denial_audited: true,
     cancelled_task_status: cancelled.status,
+    duration_seconds_persisted: true,
     callback_token_exposed: false,
     retention_dry_run: retention.dry_run,
     network: 'localhost only',

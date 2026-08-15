@@ -34,9 +34,12 @@ Modes:
 
 Safety defaults for `real_toolchain`:
 
+- The authorized root target is always retained as both an HTTPS and HTTP candidate, even when `subfinder` returns no subdomains or optional candidates are present.
 - Candidate merge revalidates every candidate host against authorized root domains from `/api/agent/targets`.
 - `nuclei` uses severities `info,low,medium,high,critical` and excludes tags `dos,bruteforce,brute-force,fuzz,fuzzing,intrusive,destructive`.
 - Rate and process timeout come from Worker-injected `RATE_LIMIT` and `TIMEOUT_MINUTES`.
+- Raw artifacts contain one structured stage record for each of `subfinder`, `httpx`, and `nuclei`, including stdout, stderr, exit code, duration, input/output counts, and any skip/failure reason.
+- If `httpx` produces no reachable authorized URL, diagnostics are ingested first and the task is then marked failed. Zero Nuclei findings remain a valid successful result when Nuclei had URL input.
 
 Flow:
 

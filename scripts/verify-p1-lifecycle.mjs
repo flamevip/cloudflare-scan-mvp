@@ -28,6 +28,7 @@ firstTransitionChanges = 0;
 assert.equal(await stateMachine.markCompleted(env, 'task-1', 'shard-1', 'run-1'), false, 'losing terminal transition must be observable by caller');
 assert.ok(preparedSql.some((sql) => sql.includes("status IN ('starting', 'running')") && sql.includes('EXISTS (SELECT 1 FROM tasks')));
 assert.ok(preparedSql.some((sql) => sql.includes("status = 'completed'") && sql.includes('dispatch_claim = NULL')));
+assert.ok(preparedSql.some((sql) => sql.includes('duration_seconds = COALESCE') && sql.includes('julianday')), 'terminal run transitions must persist duration_seconds');
 
 const consumer = source('worker/src/queue/consumer.ts');
 const taskService = source('worker/src/services/task-service.ts');
@@ -43,6 +44,7 @@ assert.match(consumer, /NOT EXISTS \([\s\S]*task_shards[\s\S]*status IN \('provi
 assert.match(consumer, /recordLateProviderLaunchAndCleanup/);
 assert.match(consumer, /provider_cleanup_completed_at = NULL/);
 assert.match(taskService, /UPDATE tasks SET status = 'cancelled', dispatch_claim = NULL/);
+assert.match(taskService, /UPDATE agent_runs SET status = 'cancelled', exit_code = 130[\s\S]*duration_seconds = COALESCE/, 'cancelled runs must persist exit code and duration');
 assert.match(taskService, /if \(Number\(results\[0\]\?\.meta\?\.changes/);
 assert.match(taskService, /pilot tasks require the fixed subdomain \+ http_probe \+ nuclei toolchain/);
 assert.match(taskService, /pilot tasks require rate_limit=1/);

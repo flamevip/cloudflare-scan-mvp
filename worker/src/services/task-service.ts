@@ -180,10 +180,12 @@ export async function cancelTask(env: Env, context: AuthContext, taskId: string)
       WHERE id = ? AND status NOT IN ('completed', 'failed', 'timeout', 'cancelled')
     `).bind(message, now, context.actor_id, now, now, taskId),
     env.DB.prepare(`
-      UPDATE agent_runs SET status = 'cancelled', error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
+      UPDATE agent_runs SET status = 'cancelled', exit_code = 130, error_message = ?,
+        duration_seconds = COALESCE(duration_seconds, CAST(MAX(0, (julianday(?) - julianday(COALESCE(started_at, created_at))) * 86400) AS INTEGER)),
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE task_id = ? AND status IN ('starting', 'running')
         AND EXISTS (SELECT 1 FROM tasks WHERE id = ? AND status = 'cancelled' AND cancelled_at = ? AND cancelled_by = ?)
-    `).bind(message, now, now, taskId, taskId, now, context.actor_id),
+    `).bind(message, now, now, now, taskId, taskId, now, context.actor_id),
     env.DB.prepare(`
       UPDATE task_shards SET status = 'cancelled', error_message = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
       WHERE task_id = ? AND status IN ('provisioning', 'running')
