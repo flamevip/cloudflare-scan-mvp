@@ -50,6 +50,7 @@ jobs:
           CALLBACK_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
           AGENT_SCAN_MODE: mock
           AGENT_MAX_CANDIDATES: "100"
+          TASK_MAX_RETRY: "1"
           TENCENT_EKS_CI_REGION: ${{ vars.TENCENT_EKS_CI_REGION }}
           TENCENT_EKS_CI_VPC_ID: ${{ vars.TENCENT_EKS_CI_VPC_ID }}
           TENCENT_EKS_CI_SUBNET_ID: ${{ vars.TENCENT_EKS_CI_SUBNET_ID }}

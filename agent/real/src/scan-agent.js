@@ -21,9 +21,9 @@ const PILOT_NUCLEI_TEMPLATE_PATHS = [
   'ssl/deprecated-tls.yaml',
 ];
 const STAGE_TIMEOUT_MS = {
-  subfinder: 2 * 60_000,
-  httpx: 3 * 60_000,
-  nuclei: 8 * 60_000,
+  subfinder: 1 * 60_000,
+  httpx: 2 * 60_000,
+  nuclei: 4 * 60_000,
 };
 const FORBIDDEN_ADDRESSES = buildForbiddenAddressList();
 const IPV4_MAPPED_ADDRESSES = buildIpv4MappedAddressList();
@@ -235,7 +235,7 @@ async function runSubfinder(env, workdir, targets) {
   let error = null;
   for (const target of targets) {
     assertWithinDeadline(env);
-    const result = await runCommand('subfinder', ['-silent', '-all', '-rl', String(env.RATE_LIMIT), '-max-time', '2', '-d', target], {
+    const result = await runCommand('subfinder', ['-silent', '-all', '-rl', String(env.RATE_LIMIT), '-max-time', '1', '-d', target], {
       cwd: workdir,
       timeoutMs: stageTimeoutMs(env, STAGE_TIMEOUT_MS.subfinder),
     });

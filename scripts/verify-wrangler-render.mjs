@@ -17,6 +17,7 @@ const baseEnv = {
   CALLBACK_BASE_URL: 'https://scan-staging.example.test',
   AGENT_SCAN_MODE: 'mock',
   AGENT_MAX_CANDIDATES: '100',
+  TASK_MAX_RETRY: '1',
   TENCENT_EKS_CI_REGION: 'ap-shanghai',
   TENCENT_EKS_CI_VPC_ID: 'vpc-fixture',
   TENCENT_EKS_CI_SUBNET_ID: 'subnet-fixture',
@@ -45,6 +46,7 @@ try {
   assert.match(toml, /routes = \[\{ pattern = "scan-staging\.example\.test", custom_domain = true \}\]/);
   assert.doesNotMatch(toml, /DEV_ADMIN_TOKEN/, 'remote config must not ship a development admin token binding');
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);
+  assert.match(toml, /TASK_MAX_RETRY = "1"/);
   assert.match(toml, /TENCENT_EKS_CI_DRY_RUN = "true"/);
   assert.match(toml, /TENCENT_EKS_CI_AUTO_CREATE_EIP = "true"/);
   assert.doesNotMatch(toml, /TENCENT_TCR_|tencentcloudcr/);
@@ -64,6 +66,10 @@ try {
   const unsafePilot = run({ ...baseEnv, ENVIRONMENT: 'pilot', TOKEN_SCOPE_ENFORCEMENT: 'report', AGENT_SCAN_MODE: 'real_toolchain' }, resolve(work, 'invalid-pilot.toml'));
   assert.notEqual(unsafePilot.status, 0);
   assert.match(unsafePilot.stderr, /must be enforce for pilot/);
+
+  const retryingPilot = run({ ...baseEnv, ENVIRONMENT: 'pilot', TOKEN_SCOPE_ENFORCEMENT: 'enforce', AGENT_SCAN_MODE: 'real_toolchain', TASK_MAX_RETRY: '1' }, resolve(work, 'invalid-pilot-retry.toml'));
+  assert.notEqual(retryingPilot.status, 0);
+  assert.match(retryingPilot.stderr, /TASK_MAX_RETRY must be 0 for pilot/);
 
   const injected = run({ ...baseEnv, WORKER_NAME: 'scan-staging\ncompatibility_date = "1999-01-01"' }, resolve(work, 'injected.toml'));
   assert.notEqual(injected.status, 0);

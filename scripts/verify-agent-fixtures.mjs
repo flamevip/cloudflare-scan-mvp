@@ -104,12 +104,12 @@ assert.ok(
 );
 assert.match(agentSource, /if \(!waitForSlot\) return;/, 'periodic heartbeats must be skipped instead of overlapping');
 assert.match(agentSource, /custom Nuclei template paths are disabled/, 'runtime template-path overrides must be rejected');
-assert.match(agentSource, /'subfinder', \['-silent', '-all', '-rl', String\(env\.RATE_LIMIT\), '-max-time', '2'/, 'subfinder must honor the task rate limit and bounded enumeration time');
+assert.match(agentSource, /'subfinder', \['-silent', '-all', '-rl', String\(env\.RATE_LIMIT\), '-max-time', '1'/, 'subfinder must honor the task rate limit and bounded enumeration time');
 assert.match(agentSource, /'-follow-host-redirects',[\s\S]*'-rate-limit', String\(env\.RATE_LIMIT\)/, 'httpx must honor the task rate limit');
 assert.match(agentSource, /'-disable-unsigned-templates',[\s\S]*'-rate-limit', String\(env\.RATE_LIMIT\)|'-rate-limit', String\(env\.RATE_LIMIT\)[\s\S]*'-disable-unsigned-templates'/, 'Nuclei must honor the task rate limit');
 assert.match(agentSource, /httpx completed without finding a reachable authorized URL/, 'empty httpx output must not silently complete the task');
 assert.match(agentSource, /result\.outcome\?\.status === 'failed'[\s\S]*\/api\/agent\/fail/, 'failed toolchain outcome must be persisted before the failure callback');
-assert.match(agentSource, /subfinder: 2 \* 60_000[\s\S]*httpx: 3 \* 60_000[\s\S]*nuclei: 8 \* 60_000/, 'each tool stage must have a fixed Pilot budget');
+assert.match(agentSource, /subfinder: 1 \* 60_000[\s\S]*httpx: 2 \* 60_000[\s\S]*nuclei: 4 \* 60_000/, 'each tool stage must have a fixed Pilot budget');
 assert.match(agentSource, /status: result\.ok \? 'completed' : result\.timed_out \? 'partial_timeout' : 'failed'/, 'timed-out tools must preserve partial output and permit safe continuation');
 for (const template of [
   'http/misconfiguration/http-missing-security-headers.yaml',
