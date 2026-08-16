@@ -1,4 +1,9 @@
 node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
+playwright-report/
+test-results/
 .wrangler/
 .terraform/
 .npm-cache-win/

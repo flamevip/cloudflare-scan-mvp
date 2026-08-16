@@ -5,6 +5,12 @@ main = "../worker/src/index.ts"
 compatibility_date = "2026-06-03"
 routes = [{ pattern = "{{WORKER_CUSTOM_DOMAIN}}", custom_domain = true }]
 
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/health"]
+
 [vars]
 ENV = "{{ENVIRONMENT}}"
 DEFAULT_PROJECT_ID = "project-default"
