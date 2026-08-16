@@ -38,6 +38,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Build management console
+        run: npm run build:web
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Verify immutable Agent image
         env:

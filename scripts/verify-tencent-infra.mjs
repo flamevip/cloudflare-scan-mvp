@@ -10,6 +10,7 @@ const bootstrap = [text('infra/tencent/bootstrap/main.tf'), text('infra/tencent/
 const ci = text('.github/workflows/ci.yml');
 const infraWorkflow = text('.github/workflows/tencent-infra.yml');
 const stagingAcceptanceWorkflow = text('.github/workflows/staging-mock-acceptance.yml');
+const stagingNegativeAcceptanceWorkflow = text('.github/workflows/staging-negative-acceptance.yml');
 const stagingRegistryDiagnosticWorkflow = text('.github/workflows/staging-registry-connectivity.yml');
 const stagingAcceptanceScript = text('scripts/run-staging-mock-acceptance.mjs');
 const stagingRegistryDiagnosticScript = text('scripts/assert-staging-registry-connectivity.mjs');
@@ -18,6 +19,15 @@ const pilotAcceptanceScript = text('scripts/run-pilot-acceptance.mjs');
 const pilotTokenScript = text('scripts/manage-pilot-acceptance-token.mjs');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
+
+for (const [name, workflow] of [
+  ['staging-real-mock-acceptance', stagingAcceptanceWorkflow],
+  ['staging-negative-acceptance', stagingNegativeAcceptanceWorkflow],
+  ['staging-domestic-registry-connectivity', stagingRegistryDiagnosticWorkflow],
+  ['pilot-live-acceptance', pilotAcceptanceWorkflow],
+]) {
+  assert.match(workflow, /npm run build:web/, `${name} must build web/dist before deploying Worker static assets`);
+}
 
 for (const resource of ['tencentcloud_vpc', 'tencentcloud_subnet', 'tencentcloud_security_group', 'tencentcloud_security_group_rule_set', 'tencentcloud_cam_policy', 'tencentcloud_cam_user_policy_attachment']) {
   assert.match(main, new RegExp(`resource "${resource}"`), `missing ${resource}`);
