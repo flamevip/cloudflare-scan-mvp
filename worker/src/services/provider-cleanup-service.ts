@@ -1,8 +1,10 @@
 import type { Env } from '../env';
 import { newId, nowIso } from '../ids';
 import { deleteAgentProviderJob, type ExternalAgentProvider } from './agent-provider';
-import { serializeProviderError, toProviderLaunchError } from './provider-errors';
+import { ProviderLaunchError, serializeProviderError, toProviderLaunchError } from './provider-errors';
 import { collectProviderDiagnostics } from './provider-diagnostics-service';
+import { isTencentEksCiAutoCreateEipEnabled } from './tencent-eks-ci-service';
+import { cleanupTencentEksAutoCreatedEip } from './tencent-vpc-service';
 
 const MAX_CLEANUP_ATTEMPTS = 5;
 const CLEANUP_BATCH_SIZE = 20;
@@ -12,6 +14,8 @@ interface CleanupRunRow {
   task_id: string;
   provider: string;
   provider_job_id: string | null;
+  provider_eip_id?: string | null;
+  provider_egress_ip?: string | null;
   provider_cleanup_attempts: number;
 }
 
@@ -34,8 +38,9 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
     await markCleanupCompleted(env, run.id, run.task_id);
     return { attempted: false, completed: true, already_absent: true, error: null };
   }
-  // Capture the last available startup/runtime state before deletion. A
-  // diagnostics failure is deliberately non-blocking so cleanup still wins.
+  // Capture the last available startup/runtime state before deletion. Event
+  // diagnostics may fail without blocking cleanup, but an auto-created EIP
+  // must have an exact ID or observed public IP before the instance is removed.
   const diagnostics = await collectProviderDiagnostics(env, run);
   if (diagnostics.errors.length) {
     console.warn(JSON.stringify({
@@ -48,14 +53,33 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
     }));
   }
   try {
+    const eipHint = await loadCleanupEipHint(env, run);
+    const autoEipEnabled = isTencentEksCiAutoCreateEipEnabled(env.TENCENT_EKS_CI_AUTO_CREATE_EIP);
+    if (autoEipEnabled && !eipHint.provider_eip_id && !eipHint.provider_egress_ip) {
+      throw new ProviderLaunchError({
+        provider: 'tencent_eks_ci',
+        phase: 'cleanup',
+        category: 'transient',
+        retryable: true,
+        safe_message: 'Tencent auto-created EIP identity is unavailable; provider deletion will retry before releasing cloud resources',
+      });
+    }
     const result = await deleteAgentProviderJob(env, run.provider as ExternalAgentProvider, run.provider_job_id);
+    const eipCleanup = autoEipEnabled
+      ? await cleanupTencentEksAutoCreatedEip(env, {
+        provider_job_id: run.provider_job_id,
+        provider_eip_id: eipHint.provider_eip_id,
+        provider_egress_ip: eipHint.provider_egress_ip,
+      })
+      : { attempted: false, released: false, already_absent: true, address_id: null, request_id: null };
     await markCleanupCompleted(env, run.id, run.task_id);
     await auditCleanup(env, run.task_id, 'provider.cleanup.completed', {
       agent_run_id: run.id,
       provider: run.provider,
       already_absent: result.already_absent,
+      eip_cleanup: eipCleanup,
     });
-    console.log(JSON.stringify({ event: 'provider.cleanup.completed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, already_absent: result.already_absent }));
+    console.log(JSON.stringify({ event: 'provider.cleanup.completed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, provider_eip_id: eipCleanup.address_id, eip_released: eipCleanup.released, eip_already_absent: eipCleanup.already_absent, already_absent: result.already_absent }));
     return { attempted: true, completed: true, already_absent: result.already_absent, error: null };
   } catch (error) {
     const providerError = toProviderLaunchError(error, 'tencent_eks_ci');
@@ -79,7 +103,7 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
 
 export async function sweepProviderCleanup(env: Env): Promise<ProviderCleanupSweepResult> {
   const rows = await env.DB.prepare(`
-    SELECT id, task_id, provider, provider_job_id, provider_cleanup_attempts
+    SELECT id, task_id, provider, provider_job_id, provider_eip_id, provider_egress_ip, provider_cleanup_attempts
     FROM agent_runs
     WHERE provider = 'tencent_eks_ci'
       AND status IN ('success', 'failed', 'timeout', 'cancelled')
@@ -95,6 +119,19 @@ export async function sweepProviderCleanup(env: Env): Promise<ProviderCleanupSwe
     else result.failed += 1;
   }
   return result;
+}
+
+async function loadCleanupEipHint(env: Env, run: CleanupRunRow): Promise<{ provider_eip_id: string | null; provider_egress_ip: string | null }> {
+  const stored = await env.DB.prepare(`
+    SELECT provider_eip_id, provider_egress_ip
+    FROM agent_runs
+    WHERE id = ? AND task_id = ?
+    LIMIT 1
+  `).bind(run.id, run.task_id).first<{ provider_eip_id: string | null; provider_egress_ip: string | null }>();
+  return {
+    provider_eip_id: stored?.provider_eip_id ?? run.provider_eip_id ?? null,
+    provider_egress_ip: stored?.provider_egress_ip ?? run.provider_egress_ip ?? null,
+  };
 }
 
 async function markCleanupCompleted(env: Env, agentRunId: string, taskId: string): Promise<void> {

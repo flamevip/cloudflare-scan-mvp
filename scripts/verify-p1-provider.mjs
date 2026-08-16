@@ -19,9 +19,16 @@ const aliyunService = loadTsModule('worker/src/services/aliyun-eci-service.ts', 
 const providerEgressService = loadTsModule('worker/src/services/provider-egress-service.ts', {
   '../ids': { nowIso: () => '2026-08-12T00:00:00.000Z' },
 });
+const tencentTc3Service = loadTsModule('worker/src/services/tencent-tc3-service.ts');
 const tencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+});
+const tencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 });
 const agentProvider = loadTsModule('worker/src/services/agent-provider.ts', {
   './aliyun-eci-service': aliyunService,
@@ -98,6 +105,8 @@ const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnosti
 });
 let cleanupMode = 'success';
 let cleanupDiagnosticsMode = 'success';
+let cleanupEipMode = 'success';
+const cleanupEipHints = [];
 const cleanupService = loadTsModule('worker/src/services/provider-cleanup-service.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
   './agent-provider': {
@@ -111,6 +120,14 @@ const cleanupService = loadTsModule('worker/src/services/provider-cleanup-servic
     collectProviderDiagnostics: async () => cleanupDiagnosticsMode === 'failure'
       ? { attempted: true, persisted: false, partial: false, errors: ['diagnostics unavailable'] }
       : { attempted: true, persisted: true, partial: false, errors: [] },
+  },
+  './tencent-eks-ci-service': { isTencentEksCiAutoCreateEipEnabled: () => true },
+  './tencent-vpc-service': {
+    cleanupTencentEksAutoCreatedEip: async (_env, hint) => {
+      cleanupEipHints.push(hint);
+      if (cleanupEipMode === 'failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'EIP cleanup timeout');
+      return { attempted: true, released: true, already_absent: false, address_id: hint.provider_eip_id, request_id: 'req-eip-cleanup' };
+    },
   },
 });
 
@@ -278,6 +295,7 @@ let createPayload;
 const creatingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 }, {
   fetch: async (_url, init) => {
     const action = new Headers(init.headers).get('X-TC-Action');
@@ -304,6 +322,7 @@ let deletePayload;
 const deletingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 }, {
   fetch: async (_url, init) => {
     const action = new Headers(init.headers).get('X-TC-Action');
@@ -322,11 +341,73 @@ assert.deepEqual(deletePayload, { EksCiIds: ['eksci-fixture'], ReleaseAutoCreate
 assert.equal(confirmedDelete.deleted, true);
 assert.equal(confirmedDelete.already_absent, false);
 
+const vpcActions = [];
+const vpcPayloads = [];
+let vpcDescribeCount = 0;
+const cleaningTencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async (_url, init) => {
+    const headers = new Headers(init.headers);
+    const action = headers.get('X-TC-Action');
+    const payload = JSON.parse(init.body);
+    vpcActions.push(action);
+    vpcPayloads.push(payload);
+    assert.equal(headers.get('Host'), 'vpc.tencentcloudapi.com');
+    assert.equal(headers.get('X-TC-Version'), '2017-03-12');
+    if (action === 'DescribeAddresses') {
+      vpcDescribeCount++;
+      if (vpcDescribeCount === 1) {
+        return jsonResponse({ Response: { RequestId: 'req-vpc-describe', TotalCount: 1, AddressSet: [{ AddressId: 'eip-orphan', AddressIp: '43.136.10.20', AddressStatus: 'UNBIND', AddressType: 'EIP' }] } });
+      }
+      return jsonResponse({ Response: { RequestId: 'req-vpc-confirm', TotalCount: 0, AddressSet: [] } });
+    }
+    if (action === 'ReleaseAddresses') return jsonResponse({ Response: { RequestId: 'req-vpc-release', TaskId: 'task-vpc-release' } });
+    throw new Error(`unexpected Tencent VPC action ${action}`);
+  },
+});
+const eipCleanup = await cleaningTencentVpcService.cleanupTencentEksAutoCreatedEip(tencentLiveEnv, {
+  provider_job_id: 'eksci-fixture',
+  provider_eip_id: null,
+  provider_egress_ip: '43.136.10.20',
+});
+assert.deepEqual(vpcActions, ['DescribeAddresses', 'ReleaseAddresses', 'DescribeAddresses']);
+assert.deepEqual(vpcPayloads[0], { Limit: 2, Offset: 0, Filters: [{ Name: 'address-ip', Values: ['43.136.10.20'] }] });
+assert.deepEqual(vpcPayloads[1], { AddressIds: ['eip-orphan'] });
+assert.equal(eipCleanup.released, true);
+assert.equal(eipCleanup.address_id, 'eip-orphan');
+
+const refusingTencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async () => jsonResponse({ Response: { RequestId: 'req-vpc-bound', TotalCount: 1, AddressSet: [{ AddressId: 'eip-bound', AddressIp: '43.136.10.21', AddressStatus: 'BIND', AddressType: 'EIP', InstanceId: 'eksci-other', InstanceType: 'EKS' }] } }),
+});
+await assert.rejects(
+  refusingTencentVpcService.cleanupTencentEksAutoCreatedEip(tencentLiveEnv, { provider_job_id: 'eksci-fixture', provider_eip_id: 'eip-bound', provider_egress_ip: '43.136.10.21' }),
+  /bound to another resource/,
+);
+const mismatchedTencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async () => jsonResponse({ Response: { RequestId: 'req-vpc-mismatch', TotalCount: 1, AddressSet: [{ AddressId: 'eip-mismatch', AddressIp: '43.136.10.99', AddressStatus: 'UNBIND', AddressType: 'EIP' }] } }),
+});
+await assert.rejects(
+  mismatchedTencentVpcService.cleanupTencentEksAutoCreatedEip(tencentLiveEnv, { provider_job_id: 'eksci-fixture', provider_eip_id: 'eip-mismatch', provider_egress_ip: '43.136.10.21' }),
+  /different public IP address/,
+);
+
 const eventActions = [];
 let eventPayload;
 const eventTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 }, {
   fetch: async (_url, init) => {
     eventActions.push(new Headers(init.headers).get('X-TC-Action'));
@@ -342,6 +423,7 @@ assert.equal(describedEvents.events[0].Reason, 'Failed');
 const duplicateDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 }, {
   fetch: async () => jsonResponse({ Response: { Error: { Code: 'ResourceNotFound.EksCi', Message: 'already gone' }, RequestId: 'req-absent' } }),
 });
@@ -351,6 +433,7 @@ const reconcileActions = [];
 const reconcilingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
   './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
 }, {
   fetch: async (_url, init) => {
     const action = new Headers(init.headers).get('X-TC-Action');
@@ -414,10 +497,12 @@ assert.equal(retrySummary.errors.length, 2);
 
 const cleanupWrites = [];
 const cleanupEnv = {
+  TENCENT_EKS_CI_AUTO_CREATE_EIP: 'true',
   DB: {
     prepare: (sql) => ({
       bind: (...values) => ({
         run: async () => { cleanupWrites.push({ sql, values }); return { success: true }; },
+        first: async () => ({ provider_eip_id: 'eip-cleanup', provider_egress_ip: '43.136.10.22' }),
       }),
     }),
   },
@@ -455,10 +540,16 @@ cleanupMode = 'success';
 const cleanupSuccess = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-fixture', provider_cleanup_attempts: 0 });
 assert.equal(cleanupSuccess.completed, true);
 assert.ok(cleanupWrites.some((write) => write.sql.includes('provider_cleanup_completed_at')));
+assert.deepEqual(JSON.parse(JSON.stringify(cleanupEipHints.at(-1))), { provider_job_id: 'eksci-fixture', provider_eip_id: 'eip-cleanup', provider_egress_ip: '43.136.10.22' });
 cleanupDiagnosticsMode = 'failure';
 const cleanupAfterDiagnosticsFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_diagnostics_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-diagnostics-failure', provider_cleanup_attempts: 0 });
-assert.equal(cleanupAfterDiagnosticsFailure.completed, true, 'diagnostics failure must not block provider deletion');
+assert.equal(cleanupAfterDiagnosticsFailure.completed, true, 'event diagnostics failure must not block cleanup when a stored EIP hint exists');
 cleanupDiagnosticsMode = 'success';
+cleanupEipMode = 'failure';
+const cleanupEipFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_eip_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-eip-failure', provider_cleanup_attempts: 0 });
+assert.equal(cleanupEipFailure.completed, false, 'EIP release failure must keep provider cleanup pending');
+assert.match(cleanupEipFailure.error, /EIP cleanup timeout/);
+cleanupEipMode = 'success';
 cleanupMode = 'failure';
 const cleanupFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-failure', provider_cleanup_attempts: 0 });
 assert.equal(cleanupFailure.completed, false);
@@ -502,6 +593,8 @@ console.log(JSON.stringify({
     duplicate_delete_is_idempotent: true,
     create_timeout_reconciled_by_name: reconciledLaunch.provider_job_id,
     cleanup_failure_recorded_for_retry: cleanupFailure.completed === false,
+    orphan_eip_released_and_confirmed_absent: eipCleanup.released,
+    eip_release_failure_recorded_for_retry: cleanupEipFailure.completed === false,
     startup_diagnostics_persisted: diagnosticsSuccess.persisted,
     event_failure_is_non_blocking: partialDiagnostics.partial && cleanupAfterDiagnosticsFailure.completed,
   },
