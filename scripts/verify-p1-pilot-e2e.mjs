@@ -149,15 +149,26 @@ try {
 }
 
 async function api(path, token, options = {}) {
-  const response = await fetch(`${base}${path}`, {
-    method: options.method || 'GET',
-    headers: { Authorization: `Bearer ${token}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${response.status}: ${text}`);
-  const parsed = JSON.parse(text);
-  return parsed.data;
+  let lastNetworkError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${base}${path}`, {
+        method: options.method || 'GET',
+        headers: { Authorization: `Bearer ${token}`, Connection: 'close', ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: AbortSignal.timeout(5_000),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`${response.status}: ${text}`);
+      const parsed = JSON.parse(text);
+      return parsed.data;
+    } catch (error) {
+      if (error instanceof Error && /^\d{3}: /.test(error.message)) throw error;
+      lastNetworkError = error;
+      if (attempt < 2) await delay(250);
+    }
+  }
+  throw lastNetworkError;
 }
 
 async function waitForHealth(url, processHandle, output) {
