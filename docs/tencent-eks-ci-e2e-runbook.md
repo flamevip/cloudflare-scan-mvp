@@ -54,7 +54,7 @@ terraform -chdir=infra/tencent apply tfplan
 完成标准：
 
 - staging/pilot VPC、子网、SG 相互隔离，Terraform 不创建共享 NAT/EIP；
-- Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；
+- Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；随后按本次运行记录的 EIP ID 或出口 IP 调用 VPC Describe 精确核对，只对未绑定的遗留地址执行 `ReleaseAddresses`，并等待地址确认不存在；
 - SG 无入站，出站规则按顺序先拒绝 RFC1918、CGNAT、loopback、link-local/metadata，再允许公网；
 - Terraform 配置不包含 TCR，镜像由 GitHub Actions 推送到公开 GHCR；
 - 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 策略；

@@ -17,6 +17,8 @@ const stagingRegistryDiagnosticScript = text('scripts/assert-staging-registry-co
 const pilotAcceptanceWorkflow = text('.github/workflows/pilot-acceptance.yml');
 const pilotAcceptanceScript = text('scripts/run-pilot-acceptance.mjs');
 const pilotTokenScript = text('scripts/manage-pilot-acceptance-token.mjs');
+const providerCleanupService = text('worker/src/services/provider-cleanup-service.ts');
+const tencentVpcService = text('worker/src/services/tencent-vpc-service.ts');
 const staging = text('config/staging.env.example');
 const pilot = text('config/pilot.env.example');
 
@@ -39,7 +41,13 @@ for (const sharedEgressResource of ['tencentcloud_eip', 'tencentcloud_nat_gatewa
   assert.doesNotMatch(main, new RegExp(`resource "${sharedEgressResource}"`), `shared egress resource ${sharedEgressResource} must not exist`);
 }
 assert.doesNotMatch(main, /tencentcloud_tcr_|open_public_operation/, 'Terraform must not manage TCR');
-for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstanceEvent', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances']) assert.match(main, new RegExp(action));
+for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstanceEvent', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances', 'vpc:DescribeAddresses', 'vpc:ReleaseAddresses']) assert.match(main, new RegExp(action));
+assert.match(providerCleanupService, /cleanupTencentEksAutoCreatedEip/, 'provider cleanup must verify and release the per-run Tencent EIP');
+assert.match(providerCleanupService, /provider deletion will retry before releasing cloud resources/, 'cleanup must retain the EKS instance until an exact EIP hint is recorded');
+assert.match(tencentVpcService, /Name: 'address-ip'/, 'orphan EIP lookup must use the exact observed public IP');
+assert.match(tencentVpcService, /status !== 'UNBIND'/, 'orphan EIP release must reject bound addresses');
+assert.match(tencentVpcService, /ReleaseAddresses/, 'orphan EIP cleanup must call the Tencent VPC release API');
+assert.match(tencentVpcService, /release was accepted but absence is not yet confirmed/, 'cleanup must not complete until the EIP is absent');
 for (const workflow of [ci, text('.github/workflows/build-agent.yml')]) assert.match(workflow, /platforms: linux\/amd64/, 'agent image builds must target the Tencent EKS CI CPU architecture explicitly');
 assert.doesNotMatch(main + bootstrap, /tencentcloud_cam_access_key|secret_key|secret_id/i, 'Terraform must not create or store CAM access keys');
 

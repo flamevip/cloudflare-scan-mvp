@@ -2,6 +2,7 @@ import type { Env } from '../env';
 import type { AgentProviderLaunchResult, LaunchAgentProviderInput } from './agent-provider';
 import { ProviderLaunchError, classifyProviderHttpError, classifyTencentProviderCode, providerConfigMissing } from './provider-errors';
 import { normalizePublicIpv4 } from './provider-egress-service';
+import { buildTencentTc3ServiceRequest, type TencentSignedRequest } from './tencent-tc3-service';
 
 const TENCENT_TKE_ENDPOINT = 'https://tke.tencentcloudapi.com/';
 const TENCENT_TKE_HOST = 'tke.tencentcloudapi.com';
@@ -86,11 +87,6 @@ interface TencentResponseBody {
     Events?: TencentEksCiEvent[];
     TotalCount?: number;
   };
-}
-
-export interface TencentSignedRequest {
-  headers: Record<string, string>;
-  body: string;
 }
 
 export interface TencentEksCiDeleteResult {
@@ -281,35 +277,18 @@ export async function buildTencentTc3Request(
   secretKey: string,
   timestamp = Math.floor(Date.now() / 1000),
 ): Promise<TencentSignedRequest> {
-  const body = JSON.stringify(payload);
-  const contentType = 'application/json; charset=utf-8';
-  const canonicalHeaders = `content-type:${contentType}\nhost:${TENCENT_TKE_HOST}\nx-tc-action:${action.toLowerCase()}\n`;
-  const signedHeaders = 'content-type;host;x-tc-action';
-  const hashedPayload = await sha256Hex(body);
-  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, hashedPayload].join('\n');
-  const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
-  const credentialScope = `${date}/${TENCENT_TKE_SERVICE}/tc3_request`;
-  const stringToSign = ['TC3-HMAC-SHA256', String(timestamp), credentialScope, await sha256Hex(canonicalRequest)].join('\n');
-  const secretDate = await hmacSha256Bytes(new TextEncoder().encode(`TC3${secretKey}`), date);
-  const secretService = await hmacSha256Bytes(secretDate, TENCENT_TKE_SERVICE);
-  const secretSigning = await hmacSha256Bytes(secretService, 'tc3_request');
-  const signature = bytesToHex(await hmacSha256Bytes(secretSigning, stringToSign));
-  const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  return {
-    body,
-    headers: {
-      Authorization: authorization,
-      'Content-Type': contentType,
-      Host: TENCENT_TKE_HOST,
-      'X-TC-Action': action,
-      'X-TC-Region': region,
-      'X-TC-Timestamp': String(timestamp),
-      'X-TC-Version': TENCENT_TKE_VERSION,
-    },
-  };
+  return buildTencentTc3ServiceRequest(action, payload, region, secretId, secretKey, {
+    host: TENCENT_TKE_HOST,
+    service: TENCENT_TKE_SERVICE,
+    version: TENCENT_TKE_VERSION,
+  }, timestamp);
 }
 
 export function isTencentEksCiDryRun(value: string | undefined): boolean {
+  return !['0', 'false', 'no', 'off'].includes(String(value ?? '').toLowerCase());
+}
+
+export function isTencentEksCiAutoCreateEipEnabled(value: string | undefined): boolean {
   return !['0', 'false', 'no', 'off'].includes(String(value ?? '').toLowerCase());
 }
 
@@ -465,22 +444,6 @@ function configValidationError(message: string): ProviderLaunchError {
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return bytesToHex(new Uint8Array(digest));
-}
-
-async function hmacSha256Bytes(keyBytes: Uint8Array, value: string): Promise<Uint8Array> {
-  const rawKey = Uint8Array.from(keyBytes).buffer;
-  const key = await crypto.subtle.importKey('raw', rawKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
-  return new Uint8Array(signature);
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function safeErrorMessage(error: unknown): string {

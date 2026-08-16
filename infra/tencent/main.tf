@@ -64,7 +64,7 @@ resource "tencentcloud_security_group_rule_set" "scan" {
 resource "tencentcloud_cam_policy" "eks_ci_runner" {
   for_each    = local.environments
   name        = "scan-${each.key}-eks-ci-runner"
-  description = "Minimum Tencent EKS CI lifecycle operations for the scan Worker."
+  description = "Minimum Tencent EKS CI lifecycle and exact orphan EIP cleanup operations for the scan Worker."
   document = jsonencode({
     version = "2.0"
     statement = [{
@@ -73,7 +73,9 @@ resource "tencentcloud_cam_policy" "eks_ci_runner" {
         "tke:CreateEKSContainerInstances",
         "tke:DescribeEKSContainerInstanceEvent",
         "tke:DescribeEKSContainerInstances",
-        "tke:DeleteEKSContainerInstances"
+        "tke:DeleteEKSContainerInstances",
+        "vpc:DescribeAddresses",
+        "vpc:ReleaseAddresses"
       ]
       resource = ["*"]
     }]
