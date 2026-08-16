@@ -1,0 +1,38 @@
+import { apiRequest, queryString } from './client';
+import type {
+  AgentRun, ApiToken, Artifact, Asset, AuditLog, AuthContext, CreateTaskInput, Finding, Health,
+  OperationsSummary, Page, Project, ProjectMember, ProviderPreflight, ProviderPreflightInput,
+  SearchResponse, Task, TaskShard, User,
+} from './contracts';
+
+export const api = {
+  health: () => apiRequest<Health>('/health', { auth: false }),
+  me: () => apiRequest<AuthContext>('/api/auth/me'),
+  projects: () => apiRequest<{ items: Project[] }>('/api/projects'),
+  tasks: (page = 1, pageSize = 20, projectId?: string) => apiRequest<Page<Task>>(`/api/tasks${queryString({ page, page_size: pageSize, project_id: projectId })}`),
+  task: (id: string, signal?: AbortSignal) => apiRequest<Task>(`/api/tasks/${encodeURIComponent(id)}`, { signal }),
+  createTask: (input: CreateTaskInput) => apiRequest<{ task_id: string; status: string }>('/api/tasks', { method: 'POST', body: input }),
+  cancelTask: (id: string) => apiRequest<Record<string, unknown>>(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }),
+  shards: (id: string, signal?: AbortSignal) => apiRequest<{ items: TaskShard[] }>(`/api/tasks/${encodeURIComponent(id)}/shards`, { signal }),
+  agentRuns: (id: string, signal?: AbortSignal) => apiRequest<{ items: AgentRun[] }>(`/api/tasks/${encodeURIComponent(id)}/agent-runs`, { signal }),
+  assets: (id: string, signal?: AbortSignal) => apiRequest<{ items: Asset[] }>(`/api/assets${queryString({ task_id: id })}`, { signal }),
+  findings: (id: string, signal?: AbortSignal) => apiRequest<{ items: Finding[] }>(`/api/findings${queryString({ task_id: id })}`, { signal }),
+  artifacts: (id: string, signal?: AbortSignal) => apiRequest<{ items: Artifact[] }>(`/api/artifacts${queryString({ task_id: id })}`, { signal }),
+  search: (params: { q: string; task_id?: string; type?: string; limit?: number }) => apiRequest<SearchResponse>(`/api/search${queryString(params)}`),
+  members: (projectId: string) => apiRequest<{ items: ProjectMember[] }>(`/api/projects/${encodeURIComponent(projectId)}/members`),
+  saveMember: (projectId: string, userId: string, role: string, status: string) => apiRequest<Record<string, unknown>>(`/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, { method: 'PUT', body: { role, status } }),
+  saveProjectSettings: (projectId: string, body: { artifact_retention_days: number; metadata_retention_days: number; audit_retention_days: number }) => apiRequest<Record<string, unknown>>(`/api/projects/${encodeURIComponent(projectId)}/settings`, { method: 'PUT', body }),
+  users: (page = 1, pageSize = 20, q?: string) => apiRequest<Page<User>>(`/api/admin/users${queryString({ page, page_size: pageSize, q })}`),
+  createUser: (body: { email: string; role: string; status: string }) => apiRequest<User>('/api/admin/users', { method: 'POST', body }),
+  tokens: (page = 1, pageSize = 20, userId?: string) => apiRequest<Page<ApiToken>>(`/api/admin/tokens${queryString({ page, page_size: pageSize, user_id: userId })}`),
+  createToken: (body: { user_id: string; name: string; scopes: string[]; expires_at: string | null }) => apiRequest<ApiToken>('/api/admin/tokens', { method: 'POST', body }),
+  rotateToken: (id: string) => apiRequest<ApiToken>(`/api/admin/tokens/${encodeURIComponent(id)}/rotate`, { method: 'POST', body: {} }),
+  revokeToken: (id: string) => apiRequest<Record<string, unknown>>(`/api/admin/tokens/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {} }),
+  auditLogs: (params: Record<string, string | number | undefined>) => apiRequest<Page<AuditLog>>(`/api/admin/audit-logs${queryString(params)}`),
+  operations: () => apiRequest<OperationsSummary>('/api/admin/operations/summary'),
+  providerPreflight: (body: ProviderPreflightInput) => apiRequest<ProviderPreflight>('/api/admin/providers/preflight', { method: 'POST', body }),
+  consumerCanary: () => apiRequest<{ nonce: string; status: string }>('/api/admin/providers/consumer-canary', { method: 'POST', body: {} }),
+  sweepTimeouts: () => apiRequest<Record<string, unknown>>('/api/admin/maintenance/timeouts', { method: 'POST', body: {} }),
+  retention: (dryRun: boolean) => apiRequest<Record<string, unknown>>('/api/admin/maintenance/retention', { method: 'POST', body: { dry_run: dryRun } }),
+  searchStatus: (taskId?: string) => apiRequest<Record<string, unknown>>(`/api/admin/search/status${queryString({ task_id: taskId })}`),
+};

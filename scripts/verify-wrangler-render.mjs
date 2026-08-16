@@ -43,6 +43,9 @@ try {
   assert.doesNotMatch(toml, /\{\{[A-Z0-9_]+\}\}/);
   assert.match(toml, /main = "\.\.\/worker\/src\/index\.ts"/, 'rendered config must resolve the Worker entry point from work/');
   assert.match(toml, /migrations_dir = "\.\.\/migrations\/d1"/, 'rendered config must resolve migrations from work/');
+  assert.match(toml, /\[assets\][\s\S]*directory = "\.\.\/web\/dist"/, 'rendered config must resolve built web assets from work/');
+  assert.match(toml, /not_found_handling = "single-page-application"/);
+  assert.match(toml, /run_worker_first = \["\/api\/\*", "\/health"\]/, 'API and health paths must never be handled by the SPA fallback');
   assert.match(toml, /routes = \[\{ pattern = "scan-staging\.example\.test", custom_domain = true \}\]/);
   assert.doesNotMatch(toml, /DEV_ADMIN_TOKEN/, 'remote config must not ship a development admin token binding');
   assert.match(toml, /TOKEN_SCOPE_ENFORCEMENT = "report"/);

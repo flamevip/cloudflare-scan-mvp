@@ -22,8 +22,11 @@ jobs:
       - run: npm run verify:p0
       - run: npm run verify:agent
       - run: npm run verify:p1
-      - run: npm run verify:p1:e2e
       - run: npm run verify:web
+      - run: npm run verify:p1:e2e
+      - name: Install Playwright Chromium
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - run: npm run test:web:e2e
       - run: node --check agent/real/src/scan-agent.js
       - run: node --check scripts/run-staging-negative-acceptance.mjs
       - run: npx wrangler deploy --dry-run --config wrangler.toml

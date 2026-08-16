@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:web": "node node_modules/vite/bin/vite.js --config web/vite.config.ts",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "typecheck:web": "node node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p web/tsconfig.json",
+    "build:web": "node node_modules/vite/bin/vite.js build --config web/vite.config.ts",
+    "test:web": "node node_modules/vitest/vitest.mjs run --config web/vite.config.ts",
+    "test:web:e2e": "node node_modules/playwright/cli.js test --config web/playwright.config.ts",
     "verify:p0": "node scripts/verify-p0.mjs",
     "verify:agent": "node scripts/verify-agent-fixtures.mjs",
     "verify:p1": "node scripts/verify-p1-migrations.mjs && node scripts/verify-p1-auth.mjs && node scripts/verify-p1-search-config.mjs && node scripts/verify-p1-observability.mjs && node scripts/verify-p1-provider.mjs && node scripts/verify-p1-lifecycle.mjs && node scripts/verify-p1-retention.mjs && node scripts/verify-toolchain.mjs && node scripts/verify-wrangler-render.mjs && node scripts/verify-worker-deploy-fallback.mjs && node scripts/verify-tencent-infra.mjs",
     "verify:p1:e2e": "node scripts/verify-p1-pilot-e2e.mjs",
-    "verify:web": "node scripts/verify-web-syntax.mjs",
+    "verify:web": "npm run typecheck:web && npm run test:web && npm run build:web && node scripts/verify-web-syntax.mjs",
     "render:wrangler": "node scripts/render-wrangler-config.mjs",
     "d1:apply:local": "wrangler d1 migrations apply scan_mvp_metadata --local",
     "d1:apply:remote": "wrangler d1 migrations apply scan_mvp_metadata --remote",
@@ -18,10 +23,24 @@
     "cloud-run:deploy-job": "./scripts/cloud-run-deploy-job.sh",
     "cloud-run:create-worker-sa": "./scripts/cloud-run-create-worker-sa.sh"
   },
+  "dependencies": {
+    "lucide-vue-next": "^0.468.0",
+    "pinia": "^3.0.0",
+    "vue": "^3.5.0",
+    "vue-router": "^4.5.0"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260604.1",
+    "@playwright/test": "^1.54.0",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/test-utils": "^2.4.6",
     "esbuild": "0.27.3",
+    "jsdom": "^26.1.0",
     "typescript": "6.0.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.0",
+    "vue-tsc": "^3.0.0",
     "wrangler": "4.97.0"
   }
 }
