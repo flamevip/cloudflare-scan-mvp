@@ -74,8 +74,8 @@ resource "tencentcloud_cam_policy" "eks_ci_runner" {
         "tke:DescribeEKSContainerInstanceEvent",
         "tke:DescribeEKSContainerInstances",
         "tke:DeleteEKSContainerInstances",
-        "vpc:DescribeAddresses",
-        "vpc:ReleaseAddresses"
+        "cvm:DescribeAddresses",
+        "cvm:ReleaseAddresses"
       ]
       resource = ["*"]
     }]

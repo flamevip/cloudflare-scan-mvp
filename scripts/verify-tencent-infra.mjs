@@ -42,7 +42,8 @@ for (const sharedEgressResource of ['tencentcloud_eip', 'tencentcloud_nat_gatewa
   assert.doesNotMatch(main, new RegExp(`resource "${sharedEgressResource}"`), `shared egress resource ${sharedEgressResource} must not exist`);
 }
 assert.doesNotMatch(main, /tencentcloud_tcr_|open_public_operation/, 'Terraform must not manage TCR');
-for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstanceEvent', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances', 'vpc:DescribeAddresses', 'vpc:ReleaseAddresses']) assert.match(main, new RegExp(action));
+for (const action of ['tke:CreateEKSContainerInstances', 'tke:DescribeEKSContainerInstanceEvent', 'tke:DescribeEKSContainerInstances', 'tke:DeleteEKSContainerInstances', 'cvm:DescribeAddresses', 'cvm:ReleaseAddresses']) assert.match(main, new RegExp(action));
+assert.doesNotMatch(main, /vpc:(Describe|Release)Addresses/, 'Tencent CAM authorizes EIP actions with the legacy cvm prefix even though calls use the VPC endpoint');
 assert.match(providerCleanupService, /cleanupTencentEksAutoCreatedEip/, 'provider cleanup must verify and release the per-run Tencent EIP');
 assert.match(providerCleanupService, /provider deletion will retry before releasing cloud resources/, 'cleanup must retain the EKS instance until an exact EIP hint is recorded');
 assert.match(providerCleanupService, /provider\.cleanup\.drift_reopened/, 'scheduled cleanup must reopen a completed record when its scan instance still exists');
