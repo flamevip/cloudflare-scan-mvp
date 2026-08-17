@@ -8,7 +8,7 @@ import { decideRetry, parseMaxRetry } from '../services/retry-policy';
 import { runInlineMockAgent } from '../services/mock-agent-service';
 import { markFailed, markRetrying } from '../services/state-machine';
 import { toProviderLaunchError, serializeProviderError, type ProviderLaunchError } from '../services/provider-errors';
-import { cleanupProviderRun } from '../services/provider-cleanup-service';
+import { cleanupProviderRunAndSchedule, processProviderCleanupMessage } from '../services/provider-cleanup-service';
 import { isTencentEksCiDryRun } from '../services/tencent-eks-ci-service';
 import { writeAudit } from '../services/audit-service';
 
@@ -39,6 +39,10 @@ export async function processDispatchMessage(env: Env, message: ScanDispatchMess
         tencent_dry_run_enabled: isTencentEksCiDryRun(env.TENCENT_EKS_CI_DRY_RUN),
       },
     });
+    return;
+  }
+  if (message.type === 'provider.cleanup') {
+    await processProviderCleanupMessage(env, message);
     return;
   }
   assertRequiredProviderMode(env, message);
@@ -203,7 +207,7 @@ async function recordLateProviderLaunchAndCleanup(env: Env, taskId: string, agen
     FROM agent_runs WHERE id = ? AND task_id = ?
   `).bind(agentRunId, taskId).first<{ id: string; task_id: string; provider: string; provider_job_id: string | null; provider_cleanup_attempts: number }>();
   const cleanup = run
-    ? await cleanupProviderRun(env, run)
+    ? await cleanupProviderRunAndSchedule(env, run)
     : { ...(await deleteAgentProviderJob(env, provider as Parameters<typeof deleteAgentProviderJob>[1], providerJobId)), completed: true };
   console.log(JSON.stringify({
     event: 'provider.launch.late_cleanup',

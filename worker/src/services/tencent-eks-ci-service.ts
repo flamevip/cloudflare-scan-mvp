@@ -322,8 +322,9 @@ async function confirmTencentEksDeletion(
   throw new ProviderLaunchError({
     provider: 'tencent_eks_ci',
     phase: 'cleanup',
-    category: 'transient',
+    category: 'pending',
     retryable: true,
+    provider_code: 'DeletePropagationPending',
     safe_message: `tencent_eks_ci delete accepted but stable absence is not confirmed delete_request_id=${deleteRequestId ?? 'unknown'} describe_request_id=${lastDescribeRequestId ?? 'unknown'} remaining=${lastRemaining.join(',') || 'unknown'}`,
   });
 }

@@ -43,6 +43,7 @@ const providerPreflight = loadTsModule('worker/src/services/provider-preflight.t
   './provider-errors': providerErrors,
 });
 const consumerAudits = [];
+const consumerCleanupMessages = [];
 const consumer = loadTsModule('worker/src/queue/consumer.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
   '../services/agent-token': { createAgentToken: async () => 'agent-token-redacted', agentTokenTtlSeconds: () => 900 },
@@ -52,7 +53,10 @@ const consumer = loadTsModule('worker/src/queue/consumer.ts', {
   '../services/mock-agent-service': { runInlineMockAgent: async () => undefined },
   '../services/state-machine': { markFailed: async () => undefined, markRetrying: async () => undefined },
   '../services/provider-errors': providerErrors,
-  '../services/provider-cleanup-service': { cleanupProviderRun: async () => ({ attempted: true, completed: true, already_absent: false, error: null }) },
+  '../services/provider-cleanup-service': {
+    cleanupProviderRunAndSchedule: async () => ({ attempted: true, completed: true, already_absent: false, error: null }),
+    processProviderCleanupMessage: async (_env, message) => consumerCleanupMessages.push(message),
+  },
   '../services/tencent-eks-ci-service': tencentService,
   '../services/audit-service': { writeAudit: async (_env, event) => consumerAudits.push(event) },
 });
@@ -78,6 +82,8 @@ await assert.rejects(
 assert.equal(modeGuardTouchedDb, false, 'mode mismatch must fail before task state or provider launch is touched');
 await consumer.processDispatchMessage(modeGuardEnv, { type: 'deployment.canary', nonce: 'canary_test', created_at: '2026-08-14T00:00:00.000Z' });
 assert.equal(consumerAudits.at(-1)?.metadata?.tencent_dry_run_enabled, true);
+await consumer.processDispatchMessage(modeGuardEnv, { type: 'provider.cleanup', task_id: 'task-cleanup', agent_run_id: 'run-cleanup', attempt: 1, created_at: '2026-08-14T00:00:00.000Z' });
+assert.equal(consumerCleanupMessages.length, 1, 'cleanup messages must bypass the task launch provider-mode guard');
 let diagnosticsMode = 'success';
 const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnostics-service.ts', {
   '../ids': { nowIso: () => '2026-06-15T00:00:00.000Z' },
@@ -108,11 +114,21 @@ let cleanupDiagnosticsMode = 'success';
 let cleanupEipMode = 'success';
 let cleanupDriftInstances = [];
 const cleanupEipHints = [];
+const cleanupDeleteCalls = [];
 const cleanupService = loadTsModule('worker/src/services/provider-cleanup-service.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
   './agent-provider': {
-    deleteAgentProviderJob: async () => {
+    deleteAgentProviderJob: async (_env, provider, providerJobId) => {
+      cleanupDeleteCalls.push({ provider, provider_job_id: providerJobId });
       if (cleanupMode === 'failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'cleanup timeout');
+      if (cleanupMode === 'pending') throw new providerErrors.ProviderLaunchError({
+        provider: 'tencent_eks_ci',
+        phase: 'cleanup',
+        category: 'pending',
+        retryable: true,
+        provider_code: 'DeletePropagationPending',
+        safe_message: 'delete accepted; waiting for stable absence',
+      });
       return { deleted: true, already_absent: cleanupMode === 'absent' };
     },
   },
@@ -483,7 +499,10 @@ await assert.rejects(
     ['eksci-reappearing'],
     deleteConfirmationOptions,
   ),
-  /stable absence is not confirmed/,
+  (error) => error instanceof providerErrors.ProviderLaunchError
+    && error.category === 'pending'
+    && error.provider_code === 'DeletePropagationPending'
+    && /stable absence is not confirmed/.test(error.safe_message),
   'a temporarily absent instance that reappears must keep cleanup pending',
 );
 
@@ -642,10 +661,123 @@ cleanupMode = 'failure';
 const cleanupFailure = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_fail', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-failure', provider_cleanup_attempts: 0 });
 assert.equal(cleanupFailure.completed, false);
 assert.match(cleanupFailure.error, /cleanup timeout/);
+assert.equal(cleanupFailure.outcome, 'failed');
+assert.equal(cleanupFailure.attempts, 1);
 assert.ok(cleanupWrites.some((write) => write.sql.includes('provider_cleanup_attempts')));
+cleanupMode = 'pending';
+const pendingWriteStart = cleanupWrites.length;
+const cleanupPending = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_pending', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-pending', provider_cleanup_attempts: 2 });
+assert.equal(cleanupPending.outcome, 'pending');
+assert.equal(cleanupPending.attempts, 2, 'accepted deletion propagation must not consume the cleanup failure budget');
+assert.equal(cleanupPending.retryable, true);
+assert.ok(cleanupWrites.slice(pendingWriteStart).some((write) => write.sql.includes('provider_cleanup_last_error = ?') && !write.sql.includes('SET provider_cleanup_attempts')));
+const exhaustedCleanup = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_cleanup_exhausted', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'eksci-exhausted', provider_cleanup_attempts: cleanupService.MAX_CLEANUP_ATTEMPTS });
+assert.equal(exhaustedCleanup.outcome, 'exhausted');
+assert.equal(exhaustedCleanup.attempted, false);
 const dryCleanup = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'run_dry', task_id: 'task_cleanup', provider: 'tencent_eks_ci', provider_job_id: 'dry-run:tencent-eks-ci/test', provider_cleanup_attempts: 0 });
 assert.equal(dryCleanup.attempted, false);
 assert.equal(dryCleanup.completed, true);
+
+const queuedMessages = [];
+const queuedWrites = [];
+let queuedRun = null;
+const queuedCleanupEnv = {
+  TENCENT_EKS_CI_DRY_RUN: 'true',
+  TENCENT_EKS_CI_AUTO_CREATE_EIP: 'true',
+  SCAN_DISPATCH: {
+    send: async (message, options) => queuedMessages.push({ message, options }),
+  },
+  DB: {
+    prepare: (sql) => ({
+      bind: (...values) => ({
+        first: async () => sql.includes('provider_cleanup_completed_at')
+          ? queuedRun
+          : { provider_eip_id: 'eip-queued', provider_egress_ip: '43.136.10.23' },
+        run: async () => { queuedWrites.push({ sql, values }); return { success: true, meta: { changes: 1 } }; },
+      }),
+    }),
+  },
+};
+cleanupMode = 'failure';
+const scheduledFailure = await cleanupService.cleanupProviderRunAndSchedule(queuedCleanupEnv, {
+  id: 'run-queued', task_id: 'task-queued', provider: 'tencent_eks_ci', provider_job_id: 'eksci-queued', provider_cleanup_attempts: 0,
+});
+assert.equal(scheduledFailure.outcome, 'failed');
+assert.equal(queuedMessages.length, 1, 'terminal cleanup failure must enqueue one delayed cleanup message');
+assert.equal(queuedMessages[0].message.type, 'provider.cleanup');
+assert.equal(queuedMessages[0].message.attempt, 1);
+assert.equal(queuedMessages[0].options.delaySeconds, cleanupService.PROVIDER_CLEANUP_RETRY_DELAY_SECONDS);
+
+cleanupMode = 'pending';
+queuedRun = {
+  id: 'run-db-authoritative',
+  task_id: 'task-db-authoritative',
+  provider: 'tencent_eks_ci',
+  provider_job_id: 'eksci-from-d1',
+  provider_eip_id: 'eip-from-d1',
+  provider_egress_ip: '43.136.10.24',
+  provider_cleanup_attempts: 2,
+  provider_cleanup_completed_at: null,
+};
+const beforeQueuedPending = queuedMessages.length;
+const queuedPending = await cleanupService.processProviderCleanupMessage(queuedCleanupEnv, {
+  type: 'provider.cleanup', task_id: queuedRun.task_id, agent_run_id: queuedRun.id, attempt: 2, created_at: '2026-08-17T00:00:00.000Z', provider_job_id: 'eksci-untrusted-message',
+});
+assert.equal(queuedPending.outcome, 'pending');
+assert.equal(queuedPending.attempts, 2);
+assert.equal(cleanupDeleteCalls.at(-1).provider_job_id, 'eksci-from-d1', 'queued cleanup must trust the D1 run instead of message provider data');
+assert.equal(queuedMessages.length, beforeQueuedPending + 1);
+assert.equal(queuedMessages.at(-1).message.attempt, 3);
+
+const beforeRetryExhaustion = queuedMessages.length;
+await cleanupService.processProviderCleanupMessage(queuedCleanupEnv, {
+  type: 'provider.cleanup', task_id: queuedRun.task_id, agent_run_id: queuedRun.id, attempt: cleanupService.MAX_QUEUE_CLEANUP_RETRIES, created_at: '2026-08-17T00:00:00.000Z',
+});
+assert.equal(queuedMessages.length, beforeRetryExhaustion, 'bounded early retries must stop and leave the Cron sweep as the final fallback');
+
+const beforeIdempotentDelete = cleanupDeleteCalls.length;
+const beforeIdempotentEip = cleanupEipHints.length;
+queuedRun = { ...queuedRun, provider_cleanup_completed_at: '2026-08-17T00:10:00.000Z' };
+const duplicateCleanup = await cleanupService.processProviderCleanupMessage(queuedCleanupEnv, {
+  type: 'provider.cleanup', task_id: queuedRun.task_id, agent_run_id: queuedRun.id, attempt: 3, created_at: '2026-08-17T00:00:00.000Z',
+});
+assert.equal(duplicateCleanup.outcome, 'skipped');
+assert.equal(cleanupDeleteCalls.length, beforeIdempotentDelete, 'duplicate or late cleanup messages must not repeat provider deletion');
+assert.equal(cleanupEipHints.length, beforeIdempotentEip, 'duplicate or late cleanup messages must not repeat EIP release');
+
+for (const fixture of [
+  null,
+  { ...queuedRun, provider_cleanup_completed_at: null, provider: 'mock_inline' },
+  { ...queuedRun, provider_cleanup_completed_at: null, provider_cleanup_attempts: cleanupService.MAX_CLEANUP_ATTEMPTS },
+]) {
+  queuedRun = fixture;
+  const ignored = await cleanupService.processProviderCleanupMessage(queuedCleanupEnv, {
+    type: 'provider.cleanup', task_id: 'task-db-authoritative', agent_run_id: 'run-db-authoritative', attempt: 2, created_at: '2026-08-17T00:00:00.000Z',
+  });
+  assert.equal(ignored.attempted, false);
+}
+
+cleanupMode = 'success';
+queuedRun = {
+  id: 'run-live-after-dry-run-switch', task_id: 'task-live-after-dry-run-switch', provider: 'tencent_eks_ci', provider_job_id: 'eksci-live-before-switch',
+  provider_eip_id: 'eip-live-before-switch', provider_egress_ip: '43.136.10.25', provider_cleanup_attempts: 0, provider_cleanup_completed_at: null,
+};
+const beforeDryRunSwitchedCleanup = cleanupDeleteCalls.length;
+const cleanupAfterDryRunSwitch = await cleanupService.processProviderCleanupMessage(queuedCleanupEnv, {
+  type: 'provider.cleanup', task_id: queuedRun.task_id, agent_run_id: queuedRun.id, attempt: 1, created_at: '2026-08-17T00:00:00.000Z',
+});
+assert.equal(cleanupAfterDryRunSwitch.completed, true);
+assert.equal(cleanupDeleteCalls.length, beforeDryRunSwitchedCleanup + 1, 'switching Worker launch mode to dry-run must not block cleanup of an existing live run');
+
+cleanupMode = 'pending';
+await assert.rejects(
+  cleanupService.cleanupProviderRunAndSchedule({
+    ...queuedCleanupEnv,
+    SCAN_DISPATCH: { send: async () => { throw new Error('queue send failed'); } },
+  }, queuedRun),
+  /queue send failed/,
+  'a delayed-send failure must reject so the current Queue delivery can be retried',
+);
 
 const cleanupDriftWrites = [];
 const cleanupDriftEnv = {
@@ -716,6 +848,11 @@ console.log(JSON.stringify({
     cleanup_failure_recorded_for_retry: cleanupFailure.completed === false,
     orphan_eip_released_and_confirmed_absent: eipCleanup.released,
     eip_release_failure_recorded_for_retry: cleanupEipFailure.completed === false,
+    cleanup_pending_preserves_failure_budget: cleanupPending.attempts === 2,
+    delayed_cleanup_retry_scheduled: scheduledFailure.outcome === 'failed',
+    cleanup_queue_is_idempotent: duplicateCleanup.outcome === 'skipped',
+    cleanup_queue_retry_is_bounded: queuedMessages.length >= 1,
+    cleanup_ignores_launch_dry_run_mode: cleanupAfterDryRunSwitch.completed,
     startup_diagnostics_persisted: diagnosticsSuccess.persisted,
     event_failure_is_non_blocking: partialDiagnostics.partial && cleanupAfterDiagnosticsFailure.completed,
     completed_cleanup_drift_reopened: cleanupDrift.reopened === 1,

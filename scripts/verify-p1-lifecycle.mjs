@@ -38,6 +38,7 @@ const agentRoute = source('worker/src/routes/agent.ts');
 const adminService = source('worker/src/services/admin-service.ts');
 const indexSource = source('worker/src/index.ts');
 const queueTypes = source('worker/src/types/queue.ts');
+const cleanupService = source('worker/src/services/provider-cleanup-service.ts');
 
 assert.match(consumer, /UPDATE tasks SET status = 'provisioning', dispatch_claim = \?/);
 assert.match(consumer, /NOT EXISTS \([\s\S]*task_shards[\s\S]*status IN \('provisioning', 'running'\)/);
@@ -49,19 +50,27 @@ assert.match(taskService, /if \(Number\(results\[0\]\?\.meta\?\.changes/);
 assert.match(taskService, /pilot tasks require the fixed subdomain \+ http_probe \+ nuclei toolchain/);
 assert.match(taskService, /pilot tasks require rate_limit=1/);
 assert.match(taskService, /pilot tasks require timeout_minutes <= 15/);
+assert.match(taskService, /cleanupProviderRunAndSchedule/);
 assert.match(timeoutService, /isTaskDeadlineExceeded/);
 assert.match(timeoutService, /retryable: !totalDeadlineExceeded/);
 assert.match(timeoutService, /if \(!transitioned\) continue/);
+assert.match(timeoutService, /cleanupProviderRunAndSchedule/);
 assert.match(ingestService, /ar\.status IN \('starting', 'running'\)/);
 assert.match(ingestService, /t\.status NOT IN \('completed', 'failed', 'timeout', 'cancelled'\)/);
 assert.match(ingestService, /ingest\.orphan_cleanup\.failed/);
 assert.match(agentRoute, /agent run became terminal before completion/);
+assert.match(agentRoute, /cleanupProviderRunAndSchedule/);
 assert.match(adminService, /rotation_claim = \?/);
 assert.match(adminService, /token was rotated or revoked concurrently/);
 assert.match(consumer, /QueueProviderModeMismatchError/);
 assert.match(consumer, /message\.required_provider_mode !== actual/);
 assert.match(indexSource, /message\.retry\(\{ delaySeconds: 5 \}\)/);
 assert.match(queueTypes, /type: 'deployment\.canary'/);
+assert.match(queueTypes, /type: 'provider\.cleanup'/);
+assert.match(cleanupService, /provider_cleanup_attempts < \?/);
+assert.match(cleanupService, /MAX_QUEUE_CLEANUP_RETRIES = 6/);
+assert.match(cleanupService, /delaySeconds: PROVIDER_CLEANUP_RETRY_DELAY_SECONDS/);
+assert.match(cleanupService, /providerError\.category === 'pending'/);
 
 console.log(JSON.stringify({ ok: true, terminal_compare_and_set: true, duplicate_dispatch_claim: true, cancel_race_guard: true, total_deadline: true, late_provider_launch_cleanup: true, late_ingest_guard: true, token_rotation_claim: true, network: 'not used', cloud_credentials: 'not used' }, null, 2));
 

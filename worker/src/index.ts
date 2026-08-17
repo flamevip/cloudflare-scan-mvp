@@ -67,7 +67,9 @@ export default {
     for (const message of batch.messages) {
       const identity = message.body.type === 'task.created'
         ? { task_id: message.body.task_id, attempt: message.body.attempt }
-        : { canary_nonce: message.body.nonce };
+        : message.body.type === 'provider.cleanup'
+          ? { task_id: message.body.task_id, agent_run_id: message.body.agent_run_id, attempt: message.body.attempt }
+          : { canary_nonce: message.body.nonce };
       console.log(JSON.stringify({ event: 'queue.dispatch.start', message_type: message.body.type, ...identity }));
       try {
         await processDispatchMessage(env, message.body);

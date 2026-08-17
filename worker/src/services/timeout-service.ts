@@ -3,7 +3,7 @@ import type { ScanDispatchMessage } from '../types/queue';
 import { newId, nowIso } from '../ids';
 import { decideRetry, decideTimeout, parseHeartbeatTimeoutSeconds } from './retry-policy';
 import { markRetrying, markTimedOut } from './state-machine';
-import { cleanupProviderRun } from './provider-cleanup-service';
+import { cleanupProviderRunAndSchedule } from './provider-cleanup-service';
 import { isTencentEksCiDryRun } from './tencent-eks-ci-service';
 
 interface StaleRunRow {
@@ -119,7 +119,7 @@ async function cleanupCurrentRun(env: Env, agentRunId: string, taskId: string): 
     provider_job_id: string | null;
     provider_cleanup_attempts: number;
   }>();
-  if (run) await cleanupProviderRun(env, run);
+  if (run) await cleanupProviderRunAndSchedule(env, run);
 }
 
 function isTaskDeadlineExceeded(startedAt: string, timeoutMinutes: number, now: string): boolean {

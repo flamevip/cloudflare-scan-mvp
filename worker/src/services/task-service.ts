@@ -22,7 +22,7 @@ import { configKey, putJson, putText, targetCandidatesKey, targetsKey } from './
 import { parseProjectScope, validateTargets, validateTargetUrls } from './scope-validation';
 import { processDispatchMessage } from '../queue/consumer';
 import { resolveEffectiveAgentProvider } from './agent-provider';
-import { cleanupProviderRun } from './provider-cleanup-service';
+import { cleanupProviderRunAndSchedule } from './provider-cleanup-service';
 import { writeAudit } from './audit-service';
 import { isTencentEksCiDryRun } from './tencent-eks-ci-service';
 
@@ -202,7 +202,7 @@ export async function cancelTask(env: Env, context: AuthContext, taskId: string)
     FROM agent_runs WHERE task_id = ? AND status = 'cancelled'
   `).bind(taskId).all<CancellableRunRow>();
   const cleanup = [];
-  for (const run of runs.results) cleanup.push({ agent_run_id: run.id, ...(await cleanupProviderRun(env, run)) });
+  for (const run of runs.results) cleanup.push({ agent_run_id: run.id, ...(await cleanupProviderRunAndSchedule(env, run)) });
   await writeAudit(env, { actor: context.actor_id, action: 'task.cancel', entity_type: 'task', entity_id: taskId, project_id: task.project_id, metadata: { previous_status: task.status, cleanup } });
   return { task_id: taskId, status: 'cancelled', already_cancelled: false, cleanup };
 }
