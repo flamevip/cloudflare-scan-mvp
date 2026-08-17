@@ -538,8 +538,11 @@ npx wrangler secret put TENCENT_SECRET_KEY
 
 ```text
 tke:CreateEKSContainerInstances
+tke:DescribeEKSContainerInstanceEvent
 tke:DescribeEKSContainerInstances
 tke:DeleteEKSContainerInstances
+cvm:DescribeAddresses
+cvm:ReleaseAddresses
 ```
 
 网络使用无入站规则的隔离子网；每次 Create 自动分配一个独立 EIP，且固定 `Replicas=1`，因此并发容器不共享出口 IP。地址只能在创建/回调后得知，已释放地址未来仍可能被腾讯地址池复用。首次 live smoke 只允许一个 `mock` 容器；`http_probe` 和 `real_toolchain` 仍需独立目标授权。

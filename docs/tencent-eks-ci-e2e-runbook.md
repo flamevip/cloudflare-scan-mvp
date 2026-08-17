@@ -57,7 +57,7 @@ terraform -chdir=infra/tencent apply tfplan
 - Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；Delete 后必须经过完整稳定窗口和连续多次精确 Describe 确认实例不存在，随后按本次运行记录的 EIP ID 或出口 IP 调用 VPC Describe 精确核对，只对未绑定的遗留地址执行 `ReleaseAddresses`，并等待地址确认不存在；
 - SG 无入站，出站规则按顺序先拒绝 RFC1918、CGNAT、loopback、link-local/metadata，再允许公网；
 - Terraform 配置不包含 TCR，镜像由 GitHub Actions 推送到公开 GHCR；
-- 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 策略；
+- 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 与 EIP `cvm:DescribeAddresses`/`cvm:ReleaseAddresses` 策略；腾讯 VPC API 的 EIP 操作在 CAM 中沿用 `cvm` action 前缀；
 - 输出的 VPC/subnet/SG ID 分别写入 GitHub Environment variables；
 - state 只存在启用加密和版本控制的 COS backend。
 
