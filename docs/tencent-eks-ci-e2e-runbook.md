@@ -54,7 +54,7 @@ terraform -chdir=infra/tencent apply tfplan
 完成标准：
 
 - staging/pilot VPC、子网、SG 相互隔离，Terraform 不创建共享 NAT/EIP；
-- Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；随后按本次运行记录的 EIP ID 或出口 IP 调用 VPC Describe 精确核对，只对未绑定的遗留地址执行 `ReleaseAddresses`，并等待地址确认不存在；
+- Create 固定 `AutoCreateEip=true`、`Replicas=1`，Delete 固定 `ReleaseAutoCreatedEip=true`；Delete 后必须经过完整稳定窗口和连续多次精确 Describe 确认实例不存在，随后按本次运行记录的 EIP ID 或出口 IP 调用 VPC Describe 精确核对，只对未绑定的遗留地址执行 `ReleaseAddresses`，并等待地址确认不存在；
 - SG 无入站，出站规则按顺序先拒绝 RFC1918、CGNAT、loopback、link-local/metadata，再允许公网；
 - Terraform 配置不包含 TCR，镜像由 GitHub Actions 推送到公开 GHCR；
 - 两个 CAM 用户只绑定 EKS CI Create/Describe/Delete 策略；
@@ -135,7 +135,7 @@ Content-Type: application/json
 1. `agent_runs.provider_job_id` 为一个真实 `eksci-*` ID，`provider_egress_ip` 在首次 callback 后为腾讯公网地址；
 2. 收到持续 heartbeat、ingest 和 complete；
 3. 任务和 run 进入成功终态；
-4. Delete 成功，5 分钟内通过 Describe 确认实例不存在；
+4. Delete 成功，5 分钟内至少连续 3 次 Describe 都确认实例数为 0；
 5. 立即以 `enable_live_provider=false` 重新部署 staging，恢复 dry-run。
 
 ## 7. pilot 完整工具链验收
@@ -188,6 +188,7 @@ Authorization: Bearer <operator-token-with-tasks:write>
 - 即使 heartbeat 持续，超过任务 `timeout_minutes` 也直接进入 timeout，不再重试；
 - 终态 Token 被拒绝；
 - Delete 失败记录 attempts/error，定时任务最多重试 5 次；
+- 定时任务发现云端仍有 `scan-*` 实例、但对应终态 run 已标记 cleanup 完成时，会清除完成标记并重新进入删除重试；
 - `GET /api/admin/operations/summary` 显示 timeout、dead-letter 和 cleanup failure 统计。
 
 ## 9. 保留策略验收
@@ -214,7 +215,7 @@ Content-Type: application/json
 
 1. 立即用 `enable_live_provider=false` 重新部署 staging/pilot，停止创建新任务。
 2. 保持腾讯 CAM 凭据有效，查询 `provider_cleanup_completed_at IS NULL` 的真实 `EksCiId`。
-3. 触发 convergence/cleanup，必要时由审批后的操作员按记录 ID 执行 Delete，并用 Describe 确认不存在。
+3. 触发 convergence/cleanup，必要时由审批后的操作员按记录 ID 执行 Delete，并用连续多次 Describe 确认稳定不存在。
 4. 确认所有真实实例清理完成后，撤销 CAM Access Key。
 5. 保留 D1 `0001`–`0010` additive migrations；失败只使用新的 forward-fix migration，不回滚或重命名字段。
 6. 保留审计、SBOM、Cosign 验证结果、镜像 digest、审批记录和 Terraform plan/apply 记录。

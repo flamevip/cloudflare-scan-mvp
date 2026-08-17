@@ -38,6 +38,7 @@ try {
   assert.equal(before.dry_run_payloads?.[0]?.dry_run_enabled, false, 'staging Worker live provider was not enabled');
   assert.equal(before.cloud_check?.ok, true, 'Tencent read-only preflight failed before negative acceptance');
   assert.equal(Number(before.cloud_check?.total_count ?? -1), 0, 'refusing to start: Tencent EKS CI instance list is not empty');
+  await waitForStableZeroInstances(30_000, 'staging.negative.pre_task_stability');
   await assertNoActiveTasks();
 
   const created = await api('/api/tasks', {
@@ -99,10 +100,8 @@ try {
     assert.equal(Number(idempotentSweep.timed_out ?? -1), 0, 'repeated timeout sweep was not idempotent');
   }
 
-  const after = await getPreflight();
-  report.tencent_instance_count_after = Number(after.cloud_check?.total_count ?? -1);
-  assert.equal(after.cloud_check?.ok, true, 'Tencent read-only preflight failed after negative acceptance');
-  assert.equal(report.tencent_instance_count_after, 0, 'Tencent EKS CI instances remain after negative acceptance');
+  await waitForStableZeroInstances(cleanupWaitMs, 'staging.negative.post_scenario_cleanup_wait');
+  report.tencent_instance_count_after = 0;
   assert.equal(report.cleanup_completed, true, 'provider cleanup did not complete');
 } catch (error) {
   terminalError = error;
@@ -121,11 +120,8 @@ try {
     }
   }
   try {
-    const after = await getPreflight();
-    report.tencent_instance_count_after = Number(after.cloud_check?.total_count ?? -1);
-    if (after.cloud_check?.ok !== true || report.tencent_instance_count_after !== 0) {
-      terminalError ??= new Error('Tencent EKS CI instance cleanup was not confirmed');
-    }
+    await waitForStableZeroInstances(cleanupWaitMs, 'staging.negative.final_cleanup_wait');
+    report.tencent_instance_count_after = 0;
   } catch (error) {
     terminalError ??= error;
   }
@@ -216,6 +212,22 @@ async function waitForAnyCleanup(targetReport, timeoutMs) {
     if ((!run || targetReport.cleanup_completed) && count === 0) return;
     await delay(2_000);
   }
+}
+
+async function waitForStableZeroInstances(timeoutMs, event) {
+  const deadline = Date.now() + timeoutMs;
+  let consecutiveZero = 0;
+  let instanceCount = -1;
+  while (Date.now() < deadline) {
+    const preflight = await getPreflight();
+    assert.equal(preflight.cloud_check?.ok, true, 'Tencent read-only preflight failed during cleanup confirmation');
+    instanceCount = Number(preflight.cloud_check?.total_count ?? -1);
+    consecutiveZero = instanceCount === 0 ? consecutiveZero + 1 : 0;
+    console.log(JSON.stringify({ event, tencent_instance_count: instanceCount, consecutive_zero_observations: consecutiveZero }));
+    if (consecutiveZero >= 3) return;
+    await delay(5_000);
+  }
+  throw new Error(`Tencent EKS CI cleanup was not stable: count=${instanceCount}, consecutive_zero_observations=${consecutiveZero}`);
 }
 
 function updateReportFromRun(targetReport, run) {

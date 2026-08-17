@@ -19,6 +19,7 @@ if (mode === 'preflight') {
   const preflight = await getPreflight();
   assertPreflight(preflight, true);
   assert.equal(Number(preflight.cloud_check?.total_count ?? -1), 0, 'refusing to proceed: Tencent EKS CI instance list is not empty');
+  await waitForStableZeroInstances(30_000, true, 'pilot.acceptance.preflight_stability');
   await assertNoActiveTasks();
   const search = await api('/api/admin/search/status');
   assert.equal(search.enabled, true, 'AI Search is not enabled');
@@ -33,23 +34,14 @@ if (mode === 'verify-live-consumer') {
   const preflight = await getPreflight();
   assertPreflight(preflight, false);
   assert.equal(Number(preflight.cloud_check?.total_count ?? -1), 0, 'refusing to create Pilot task while an EKS CI instance exists');
+  await waitForStableZeroInstances(30_000, false, 'pilot.acceptance.live_consumer_stability');
   console.log(JSON.stringify({ event: 'pilot.acceptance.live_consumer_verified', target }));
   process.exit(0);
 }
 
 if (mode === 'verify-dry-run') {
   await waitForProviderMode(true);
-  const deadline = Date.now() + 5 * 60_000;
-  let instanceCount = -1;
-  do {
-    const preflight = await getPreflight();
-    assertPreflight(preflight, true);
-    instanceCount = Number(preflight.cloud_check?.total_count ?? -1);
-    if (instanceCount === 0 || Date.now() >= deadline) break;
-    console.log(JSON.stringify({ event: 'pilot.acceptance.cleanup_wait', tencent_instance_count: instanceCount }));
-    await delay(10_000);
-  } while (true);
-  assert.equal(instanceCount, 0, 'Tencent EKS CI instances remain after Pilot rollback');
+  await waitForStableZeroInstances(5 * 60_000, true, 'pilot.acceptance.cleanup_wait');
   await verifyConsumerCanary(true);
   console.log(JSON.stringify({ event: 'pilot.acceptance.rollback_verified', dry_run: true, tencent_instance_count: 0 }));
   process.exit(0);
@@ -88,6 +80,7 @@ try {
   const before = await getPreflight();
   assertPreflight(before, false);
   assert.equal(Number(before.cloud_check?.total_count ?? -1), 0, 'refusing to start: Tencent EKS CI instance list is not empty');
+  await waitForStableZeroInstances(30_000, false, 'pilot.acceptance.pre_task_stability');
   await assertNoActiveTasks();
 
   const created = await api('/api/tasks', {
@@ -148,8 +141,7 @@ try {
   await validateResults(report);
   await waitForCleanup(report, 2 * 60_000);
   assert.equal(report.cleanup_completed, true, 'provider cleanup did not complete');
-  const after = await getPreflight();
-  assert.equal(Number(after.cloud_check?.total_count ?? -1), 0, 'Tencent EKS CI instance cleanup was not confirmed');
+  await waitForStableZeroInstances(2 * 60_000, false, 'pilot.acceptance.post_task_cleanup_wait');
 } catch (error) {
   terminalError = error;
 } finally {
@@ -232,6 +224,22 @@ async function validateResults(targetReport) {
   assert.equal(search.degraded, false, `AI Search query degraded: ${search.error?.message ?? 'unknown error'}`);
   assert.ok(targetReport.duration_seconds !== null && Number.isFinite(Number(targetReport.duration_seconds)), 'Agent run duration_seconds is missing');
   assert.ok(targetReport.provider_egress_ip, 'independent provider egress IP was not recorded');
+}
+
+async function waitForStableZeroInstances(timeoutMs, expectedDryRun, event) {
+  const deadline = Date.now() + timeoutMs;
+  let consecutiveZero = 0;
+  let instanceCount = -1;
+  while (Date.now() < deadline) {
+    const preflight = await getPreflight();
+    assertPreflight(preflight, expectedDryRun);
+    instanceCount = Number(preflight.cloud_check?.total_count ?? -1);
+    consecutiveZero = instanceCount === 0 ? consecutiveZero + 1 : 0;
+    console.log(JSON.stringify({ event, tencent_instance_count: instanceCount, consecutive_zero_observations: consecutiveZero }));
+    if (consecutiveZero >= 3) return;
+    await delay(5_000);
+  }
+  throw new Error(`Tencent EKS CI cleanup was not stable: count=${instanceCount}, consecutive_zero_observations=${consecutiveZero}`);
 }
 
 function assertPreflight(preflight, expectedDryRun) {
