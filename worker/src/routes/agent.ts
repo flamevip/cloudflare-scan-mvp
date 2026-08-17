@@ -5,7 +5,7 @@ import { ingestAgentPayload } from '../services/ingest-service';
 import { markCompleted, markFailed, markRunning } from '../services/state-machine';
 import { externalCandidatesKey, getObject, targetCandidatesKey } from '../services/r2-service';
 import { ok, readJson, HttpError } from '../response';
-import { cleanupProviderRun } from '../services/provider-cleanup-service';
+import { cleanupProviderRunAndSchedule } from '../services/provider-cleanup-service';
 import { recordProviderEgressIp } from '../services/provider-egress-service';
 
 interface AgentBasePayload {
@@ -86,7 +86,7 @@ async function scheduleTerminalCleanup(env: Env, taskId: string, agentRunId: str
     FROM agent_runs WHERE id = ? AND task_id = ?
   `).bind(agentRunId, taskId).first<{ id: string; task_id: string; provider: string; provider_job_id: string | null; provider_cleanup_attempts: number }>();
   if (!run || run.provider !== 'tencent_eks_ci') return;
-  const cleanup = cleanupProviderRun(env, run).catch((error) => {
+  const cleanup = cleanupProviderRunAndSchedule(env, run).catch((error) => {
     console.error(JSON.stringify({ event: 'provider.cleanup.schedule_failed', task_id: taskId, agent_run_id: agentRunId, error: error instanceof Error ? error.message : String(error) }));
   });
   if (context) context.waitUntil(cleanup);

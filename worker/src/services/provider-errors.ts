@@ -1,7 +1,7 @@
 import type { ExternalAgentProvider } from './agent-provider';
 
 export type ProviderErrorPhase = 'config' | 'auth' | 'request' | 'provider_response' | 'parse' | 'cleanup' | 'unknown';
-export type ProviderErrorCategory = 'config_missing' | 'auth_failed' | 'validation' | 'quota' | 'rate_limited' | 'transient' | 'unknown';
+export type ProviderErrorCategory = 'config_missing' | 'auth_failed' | 'validation' | 'quota' | 'rate_limited' | 'transient' | 'pending' | 'unknown';
 
 export class ProviderLaunchError extends Error {
   provider: ExternalAgentProvider;

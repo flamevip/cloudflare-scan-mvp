@@ -1,4 +1,5 @@
 import type { Env } from '../env';
+import type { ProviderCleanupMessage } from '../types/queue';
 import { newId, nowIso } from '../ids';
 import { deleteAgentProviderJob, type ExternalAgentProvider } from './agent-provider';
 import { ProviderLaunchError, serializeProviderError, toProviderLaunchError } from './provider-errors';
@@ -6,7 +7,9 @@ import { collectProviderDiagnostics } from './provider-diagnostics-service';
 import { describeTencentEksContainerInstances, isTencentEksCiAutoCreateEipEnabled } from './tencent-eks-ci-service';
 import { cleanupTencentEksAutoCreatedEip } from './tencent-vpc-service';
 
-const MAX_CLEANUP_ATTEMPTS = 5;
+export const MAX_CLEANUP_ATTEMPTS = 5;
+export const MAX_QUEUE_CLEANUP_RETRIES = 6;
+export const PROVIDER_CLEANUP_RETRY_DELAY_SECONDS = 90;
 const CLEANUP_BATCH_SIZE = 20;
 
 interface CleanupRunRow {
@@ -24,6 +27,9 @@ export interface ProviderCleanupResult {
   completed: boolean;
   already_absent: boolean;
   error: string | null;
+  outcome: 'completed' | 'pending' | 'failed' | 'skipped' | 'exhausted';
+  attempts: number;
+  retryable: boolean;
 }
 
 export interface ProviderCleanupSweepResult {
@@ -44,10 +50,14 @@ export interface ProviderCleanupDriftResult {
 }
 
 export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<ProviderCleanupResult> {
-  if (run.provider !== 'tencent_eks_ci') return { attempted: false, completed: true, already_absent: true, error: null };
+  const currentAttempts = Math.max(0, run.provider_cleanup_attempts ?? 0);
+  if (run.provider !== 'tencent_eks_ci') return cleanupResult('skipped', currentAttempts, false, true, true, null);
   if (!run.provider_job_id || run.provider_job_id.startsWith('dry-run:')) {
     await markCleanupCompleted(env, run.id, run.task_id);
-    return { attempted: false, completed: true, already_absent: true, error: null };
+    return cleanupResult('completed', currentAttempts, false, true, true, null);
+  }
+  if (currentAttempts >= MAX_CLEANUP_ATTEMPTS) {
+    return cleanupResult('exhausted', currentAttempts, false, false, false, 'provider cleanup retry limit reached');
   }
   // Capture the last available startup/runtime state before deletion. Event
   // diagnostics may fail without blocking cleanup, but an auto-created EIP
@@ -91,25 +101,70 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
       eip_cleanup: eipCleanup,
     });
     console.log(JSON.stringify({ event: 'provider.cleanup.completed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, provider_eip_id: eipCleanup.address_id, eip_released: eipCleanup.released, eip_already_absent: eipCleanup.already_absent, already_absent: result.already_absent }));
-    return { attempted: true, completed: true, already_absent: result.already_absent, error: null };
+    return cleanupResult('completed', currentAttempts, true, true, result.already_absent, null);
   } catch (error) {
     const providerError = toProviderLaunchError(error, 'tencent_eks_ci');
-    const attempts = Math.max(0, run.provider_cleanup_attempts) + 1;
-    await env.DB.prepare(`
-      UPDATE agent_runs
-      SET provider_cleanup_attempts = ?, provider_cleanup_last_error = ?, updated_at = ?
-      WHERE id = ? AND task_id = ? AND provider_cleanup_completed_at IS NULL
-    `).bind(attempts, providerError.safe_message, nowIso(), run.id, run.task_id).run();
-    await auditCleanup(env, run.task_id, 'provider.cleanup.failed', {
+    const pending = providerError.category === 'pending';
+    const attempts = await recordCleanupIssue(env, run, providerError.safe_message, pending);
+    await auditCleanup(env, run.task_id, pending ? 'provider.cleanup.pending' : 'provider.cleanup.failed', {
       agent_run_id: run.id,
       provider: run.provider,
       attempt: attempts,
       max_attempts: MAX_CLEANUP_ATTEMPTS,
       error: serializeProviderError(providerError),
     });
-    console.error(JSON.stringify({ event: 'provider.cleanup.failed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, attempt: attempts, max_attempts: MAX_CLEANUP_ATTEMPTS, error: providerError.safe_message }));
-    return { attempted: true, completed: false, already_absent: false, error: providerError.safe_message };
+    const event = { event: pending ? 'provider.cleanup.pending' : 'provider.cleanup.failed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, attempt: attempts, max_attempts: MAX_CLEANUP_ATTEMPTS, error: providerError.safe_message };
+    if (pending) console.warn(JSON.stringify(event));
+    else console.error(JSON.stringify(event));
+    return cleanupResult(pending ? 'pending' : 'failed', attempts, true, false, false, providerError.safe_message, pending || (providerError.retryable && attempts < MAX_CLEANUP_ATTEMPTS));
   }
+}
+
+export async function cleanupProviderRunAndSchedule(
+  env: Env,
+  run: CleanupRunRow,
+  queueAttempt = 0,
+): Promise<ProviderCleanupResult> {
+  const result = await cleanupProviderRun(env, run);
+  if (!result.completed && result.retryable && queueAttempt < MAX_QUEUE_CLEANUP_RETRIES) {
+    const message: ProviderCleanupMessage = {
+      type: 'provider.cleanup',
+      task_id: run.task_id,
+      agent_run_id: run.id,
+      attempt: queueAttempt + 1,
+      created_at: nowIso(),
+    };
+    await env.SCAN_DISPATCH.send(message, { delaySeconds: PROVIDER_CLEANUP_RETRY_DELAY_SECONDS });
+    console.log(JSON.stringify({
+      event: 'provider.cleanup.retry_scheduled',
+      task_id: run.task_id,
+      agent_run_id: run.id,
+      attempt: message.attempt,
+      delay_seconds: PROVIDER_CLEANUP_RETRY_DELAY_SECONDS,
+      outcome: result.outcome,
+      provider_cleanup_attempts: result.attempts,
+    }));
+  }
+  return result;
+}
+
+export async function processProviderCleanupMessage(env: Env, message: ProviderCleanupMessage): Promise<ProviderCleanupResult> {
+  const run = await env.DB.prepare(`
+    SELECT id, task_id, provider, provider_job_id, provider_eip_id, provider_egress_ip,
+      provider_cleanup_attempts, provider_cleanup_completed_at
+    FROM agent_runs
+    WHERE id = ? AND task_id = ?
+    LIMIT 1
+  `).bind(message.agent_run_id, message.task_id).first<CleanupRunRow & { provider_cleanup_completed_at: string | null }>();
+  if (!run) return cleanupResult('skipped', 0, false, true, true, null);
+  const attempts = Math.max(0, run.provider_cleanup_attempts ?? 0);
+  if (run.provider_cleanup_completed_at || run.provider !== 'tencent_eks_ci') {
+    return cleanupResult('skipped', attempts, false, true, true, null);
+  }
+  if (attempts >= MAX_CLEANUP_ATTEMPTS) {
+    return cleanupResult('exhausted', attempts, false, false, false, 'provider cleanup retry limit reached');
+  }
+  return cleanupProviderRunAndSchedule(env, run, normalizeQueueAttempt(message.attempt));
 }
 
 export async function sweepProviderCleanup(env: Env): Promise<ProviderCleanupSweepResult> {
@@ -238,9 +293,54 @@ async function markCleanupCompleted(env: Env, agentRunId: string, taskId: string
   `).bind(now, now, agentRunId, taskId).run();
 }
 
+async function recordCleanupIssue(env: Env, run: CleanupRunRow, error: string, pending: boolean): Promise<number> {
+  const currentAttempts = Math.max(0, run.provider_cleanup_attempts ?? 0);
+  const now = nowIso();
+  if (pending) {
+    // Deletion propagation is expected after Tencent accepts the request. Do
+    // not write a stale attempt value that could race with a real failure.
+    await env.DB.prepare(`
+      UPDATE agent_runs
+      SET provider_cleanup_last_error = ?, updated_at = ?
+      WHERE id = ? AND task_id = ? AND provider_cleanup_completed_at IS NULL
+    `).bind(error, now, run.id, run.task_id).run();
+    return currentAttempts;
+  }
+
+  const nextAttempts = Math.min(MAX_CLEANUP_ATTEMPTS, currentAttempts + 1);
+  const updated = await env.DB.prepare(`
+    UPDATE agent_runs
+    SET provider_cleanup_attempts = ?, provider_cleanup_last_error = ?, updated_at = ?
+    WHERE id = ? AND task_id = ? AND provider_cleanup_completed_at IS NULL
+      AND provider_cleanup_attempts = ?
+  `).bind(nextAttempts, error, now, run.id, run.task_id, currentAttempts).run();
+  if (Number(updated.meta?.changes ?? 0) > 0) return nextAttempts;
+  const latest = await env.DB.prepare(`
+    SELECT provider_cleanup_attempts FROM agent_runs WHERE id = ? AND task_id = ?
+  `).bind(run.id, run.task_id).first<{ provider_cleanup_attempts: number }>();
+  return Math.max(currentAttempts, Number(latest?.provider_cleanup_attempts ?? nextAttempts));
+}
+
 async function auditCleanup(env: Env, taskId: string, action: string, metadata: Record<string, unknown>): Promise<void> {
   await env.DB.prepare(`
     INSERT INTO audit_logs (id, actor, action, entity_type, entity_id, project_id, metadata_json, created_at)
     VALUES (?, 'system', ?, 'task', ?, (SELECT project_id FROM tasks WHERE id = ?), ?, ?)
   `).bind(newId('audit'), action, taskId, taskId, JSON.stringify(metadata), nowIso()).run();
+}
+
+function normalizeQueueAttempt(attempt: number): number {
+  if (!Number.isFinite(attempt)) return 1;
+  return Math.max(1, Math.floor(attempt));
+}
+
+function cleanupResult(
+  outcome: ProviderCleanupResult['outcome'],
+  attempts: number,
+  attempted: boolean,
+  completed: boolean,
+  alreadyAbsent: boolean,
+  error: string | null,
+  retryable = false,
+): ProviderCleanupResult {
+  return { attempted, completed, already_absent: alreadyAbsent, error, outcome, attempts, retryable };
 }

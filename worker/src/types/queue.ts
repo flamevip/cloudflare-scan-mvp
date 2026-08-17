@@ -15,4 +15,12 @@ export interface DeploymentCanaryMessage {
   created_at: string;
 }
 
-export type ScanDispatchMessage = TaskCreatedMessage | DeploymentCanaryMessage;
+export interface ProviderCleanupMessage {
+  type: 'provider.cleanup';
+  task_id: string;
+  agent_run_id: string;
+  attempt: number;
+  created_at: string;
+}
+
+export type ScanDispatchMessage = TaskCreatedMessage | DeploymentCanaryMessage | ProviderCleanupMessage;
