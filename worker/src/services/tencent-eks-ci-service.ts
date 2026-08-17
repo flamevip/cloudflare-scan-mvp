@@ -10,6 +10,9 @@ const TENCENT_TKE_SERVICE = 'tke';
 const TENCENT_TKE_VERSION = '2018-05-25';
 const DEFAULT_API_TIMEOUT_MS = 10_000;
 const MAX_API_TIMEOUT_MS = 30_000;
+const DELETE_CONFIRM_ATTEMPTS = 4;
+const DELETE_CONFIRM_DELAY_MS = 5_000;
+const DELETE_CONFIRM_REQUIRED_CONSECUTIVE_ABSENCE = 2;
 
 interface TencentEnvironmentVariable {
   Name: string;
@@ -93,6 +96,12 @@ export interface TencentEksCiDeleteResult {
   deleted: boolean;
   already_absent: boolean;
   request_id: string | null;
+}
+
+export interface TencentEksCiDeleteOptions {
+  confirmation_attempts?: number;
+  confirmation_delay_ms?: number;
+  required_consecutive_absence?: number;
 }
 
 export async function launchTencentEksContainerInstance(env: Env, input: LaunchAgentProviderInput): Promise<AgentProviderLaunchResult> {
@@ -238,35 +247,85 @@ export async function describeTencentEksContainerInstanceEvents(
   };
 }
 
-export async function deleteTencentEksContainerInstances(env: Env, ids: string[]): Promise<TencentEksCiDeleteResult> {
+export async function deleteTencentEksContainerInstances(
+  env: Env,
+  ids: string[],
+  options: TencentEksCiDeleteOptions = {},
+): Promise<TencentEksCiDeleteResult> {
   const realIds = [...new Set(ids.filter((id) => /^eksci-[A-Za-z0-9-]+$/.test(id)))].slice(0, 20);
   if (!realIds.length) return { deleted: true, already_absent: true, request_id: null };
   const region = required(env.TENCENT_EKS_CI_REGION, 'TENCENT_EKS_CI_REGION');
   const secretId = required(env.TENCENT_SECRET_ID, 'TENCENT_SECRET_ID');
   const secretKey = required(env.TENCENT_SECRET_KEY, 'TENCENT_SECRET_KEY');
+  let requestId: string | null = null;
+  let alreadyAbsent = false;
   try {
     const response = await callTencentTkeApi(env, 'DeleteEKSContainerInstances', {
       EksCiIds: realIds,
       ReleaseAutoCreatedEip: true,
     }, region, secretId, secretKey);
-    const confirmation = await describeTencentEksContainerInstances(env, { ids: realIds, limit: realIds.length });
-    const remaining = new Set(confirmation.instances.map((instance) => instance.EksCiId).filter(Boolean));
-    if (confirmation.total_count > 0 || realIds.some((id) => remaining.has(id))) {
-      throw new ProviderLaunchError({
-        provider: 'tencent_eks_ci',
-        phase: 'cleanup',
-        category: 'transient',
-        retryable: true,
-        safe_message: `tencent_eks_ci delete accepted but absence is not yet confirmed request_id=${response.Response?.RequestId ?? 'unknown'}`,
-      });
-    }
-    return { deleted: true, already_absent: false, request_id: response.Response?.RequestId ?? null };
+    requestId = response.Response?.RequestId ?? null;
   } catch (error) {
     if (error instanceof ProviderLaunchError && /ContainerNotFound|ResourceNotFound/i.test(error.provider_code ?? '')) {
-      return { deleted: true, already_absent: true, request_id: null };
+      alreadyAbsent = true;
+    } else {
+      throw error;
     }
-    throw error;
   }
+
+  await confirmTencentEksDeletion(env, realIds, requestId, options);
+  return { deleted: true, already_absent: alreadyAbsent, request_id: requestId };
+}
+
+async function confirmTencentEksDeletion(
+  env: Env,
+  ids: string[],
+  deleteRequestId: string | null,
+  options: TencentEksCiDeleteOptions,
+): Promise<void> {
+  const attempts = boundedInteger(options.confirmation_attempts, DELETE_CONFIRM_ATTEMPTS, 2, 10);
+  const delayMs = boundedInteger(options.confirmation_delay_ms, DELETE_CONFIRM_DELAY_MS, 0, 30_000);
+  const requiredConsecutiveAbsence = boundedInteger(
+    options.required_consecutive_absence,
+    DELETE_CONFIRM_REQUIRED_CONSECUTIVE_ABSENCE,
+    2,
+    attempts,
+  );
+  let consecutiveAbsence = 0;
+  let lastDescribeRequestId: string | null = null;
+  let lastRemaining: string[] = [...ids];
+
+  // Tencent deletion is asynchronous and Describe is eventually consistent.
+  // Always observe the full stabilization window, even when the first read is
+  // empty, so a temporarily invisible instance cannot be marked cleaned up.
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const confirmation = await describeTencentEksContainerInstances(env, { ids, limit: ids.length });
+      lastDescribeRequestId = confirmation.request_id;
+      const returnedIds = new Set(confirmation.instances.map((instance) => instance.EksCiId).filter((id): id is string => Boolean(id)));
+      const exactRemaining = ids.filter((id) => returnedIds.has(id));
+      const absent = confirmation.total_count === 0 && exactRemaining.length === 0;
+      consecutiveAbsence = absent ? consecutiveAbsence + 1 : 0;
+      lastRemaining = absent ? [] : exactRemaining.length ? exactRemaining : [...ids];
+    } catch (error) {
+      if (error instanceof ProviderLaunchError && /ContainerNotFound|ResourceNotFound/i.test(error.provider_code ?? '')) {
+        consecutiveAbsence += 1;
+        lastRemaining = [];
+      } else {
+        throw error;
+      }
+    }
+    if (attempt + 1 < attempts) await delay(delayMs);
+  }
+
+  if (consecutiveAbsence >= requiredConsecutiveAbsence) return;
+  throw new ProviderLaunchError({
+    provider: 'tencent_eks_ci',
+    phase: 'cleanup',
+    category: 'transient',
+    retryable: true,
+    safe_message: `tencent_eks_ci delete accepted but stable absence is not confirmed delete_request_id=${deleteRequestId ?? 'unknown'} describe_request_id=${lastDescribeRequestId ?? 'unknown'} remaining=${lastRemaining.join(',') || 'unknown'}`,
+  });
 }
 
 export async function buildTencentTc3Request(
@@ -431,6 +490,16 @@ function parseApiTimeout(value: string | undefined): number {
   const parsed = Number(value ?? DEFAULT_API_TIMEOUT_MS);
   if (!Number.isFinite(parsed)) return DEFAULT_API_TIMEOUT_MS;
   return Math.max(1000, Math.min(MAX_API_TIMEOUT_MS, Math.floor(parsed)));
+}
+
+function boundedInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function delay(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
 function required(value: string | undefined, name: string): string {

@@ -3,7 +3,7 @@ import { newId, nowIso } from '../ids';
 import { deleteAgentProviderJob, type ExternalAgentProvider } from './agent-provider';
 import { ProviderLaunchError, serializeProviderError, toProviderLaunchError } from './provider-errors';
 import { collectProviderDiagnostics } from './provider-diagnostics-service';
-import { isTencentEksCiAutoCreateEipEnabled } from './tencent-eks-ci-service';
+import { describeTencentEksContainerInstances, isTencentEksCiAutoCreateEipEnabled } from './tencent-eks-ci-service';
 import { cleanupTencentEksAutoCreatedEip } from './tencent-vpc-service';
 
 const MAX_CLEANUP_ATTEMPTS = 5;
@@ -30,6 +30,17 @@ export interface ProviderCleanupSweepResult {
   checked: number;
   completed: number;
   failed: number;
+  drift: ProviderCleanupDriftResult;
+}
+
+export interface ProviderCleanupDriftResult {
+  cloud_checked: boolean;
+  observed_scan_instances: number;
+  reopened: number;
+  already_pending: number;
+  active: number;
+  untracked: number;
+  error: string | null;
 }
 
 export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<ProviderCleanupResult> {
@@ -102,6 +113,7 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
 }
 
 export async function sweepProviderCleanup(env: Env): Promise<ProviderCleanupSweepResult> {
+  const drift = await reconcileProviderCleanupDrift(env);
   const rows = await env.DB.prepare(`
     SELECT id, task_id, provider, provider_job_id, provider_eip_id, provider_egress_ip, provider_cleanup_attempts
     FROM agent_runs
@@ -112,11 +124,92 @@ export async function sweepProviderCleanup(env: Env): Promise<ProviderCleanupSwe
     ORDER BY finished_at ASC, created_at ASC
     LIMIT ?
   `).bind(MAX_CLEANUP_ATTEMPTS, CLEANUP_BATCH_SIZE).all<CleanupRunRow>();
-  const result: ProviderCleanupSweepResult = { checked: rows.results.length, completed: 0, failed: 0 };
+  const result: ProviderCleanupSweepResult = { checked: rows.results.length, completed: 0, failed: 0, drift };
   for (const row of rows.results) {
     const cleanup = await cleanupProviderRun(env, row);
     if (cleanup.completed) result.completed += 1;
     else result.failed += 1;
+  }
+  return result;
+}
+
+export async function reconcileProviderCleanupDrift(env: Env): Promise<ProviderCleanupDriftResult> {
+  const result: ProviderCleanupDriftResult = {
+    cloud_checked: false,
+    observed_scan_instances: 0,
+    reopened: 0,
+    already_pending: 0,
+    active: 0,
+    untracked: 0,
+    error: null,
+  };
+  if (!env.TENCENT_EKS_CI_REGION?.trim() || !env.TENCENT_SECRET_ID?.trim() || !env.TENCENT_SECRET_KEY?.trim()) return result;
+
+  try {
+    const cloud = await describeTencentEksContainerInstances(env, { limit: 100 });
+    result.cloud_checked = true;
+    const scanInstances = cloud.instances.filter((instance) => (
+      /^eksci-[A-Za-z0-9-]+$/.test(String(instance.EksCiId ?? ''))
+      && String(instance.EksCiName ?? '').startsWith('scan-')
+    ));
+    result.observed_scan_instances = scanInstances.length;
+
+    for (const instance of scanInstances) {
+      const providerJobId = String(instance.EksCiId);
+      const run = await env.DB.prepare(`
+        SELECT id, task_id, status, provider_cleanup_completed_at
+        FROM agent_runs
+        WHERE provider = 'tencent_eks_ci' AND provider_job_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).bind(providerJobId).first<{ id: string; task_id: string; status: string; provider_cleanup_completed_at: string | null }>();
+      if (!run) {
+        result.untracked += 1;
+        continue;
+      }
+      if (!['success', 'failed', 'timeout', 'cancelled'].includes(run.status)) {
+        result.active += 1;
+        continue;
+      }
+      if (!run.provider_cleanup_completed_at) {
+        result.already_pending += 1;
+        continue;
+      }
+
+      const now = nowIso();
+      const reopened = await env.DB.prepare(`
+        UPDATE agent_runs
+        SET provider_cleanup_completed_at = NULL,
+            provider_cleanup_attempts = 0,
+            provider_cleanup_last_error = ?,
+            updated_at = ?
+        WHERE id = ? AND task_id = ? AND provider_cleanup_completed_at IS NOT NULL
+      `).bind('Tencent cleanup drift detected: scan instance still exists after completion marker', now, run.id, run.task_id).run();
+      if (Number(reopened.meta?.changes ?? 0) === 0) {
+        result.already_pending += 1;
+        continue;
+      }
+      result.reopened += 1;
+      await auditCleanup(env, run.task_id, 'provider.cleanup.drift_reopened', {
+        agent_run_id: run.id,
+        provider: 'tencent_eks_ci',
+        provider_job_id: providerJobId,
+        previous_cleanup_completed_at: run.provider_cleanup_completed_at,
+        observed_status: instance.Status ?? null,
+        describe_request_id: cloud.request_id,
+      });
+      console.warn(JSON.stringify({
+        event: 'provider.cleanup.drift_reopened',
+        task_id: run.task_id,
+        agent_run_id: run.id,
+        provider_job_id: providerJobId,
+        previous_cleanup_completed_at: run.provider_cleanup_completed_at,
+      }));
+    }
+  } catch (error) {
+    const providerError = toProviderLaunchError(error, 'tencent_eks_ci');
+    result.error = providerError.safe_message;
+    console.warn(JSON.stringify({ event: 'provider.cleanup.drift_check_failed', error: serializeProviderError(providerError) }));
   }
   return result;
 }

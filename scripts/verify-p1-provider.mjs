@@ -106,6 +106,7 @@ const providerDiagnostics = loadTsModule('worker/src/services/provider-diagnosti
 let cleanupMode = 'success';
 let cleanupDiagnosticsMode = 'success';
 let cleanupEipMode = 'success';
+let cleanupDriftInstances = [];
 const cleanupEipHints = [];
 const cleanupService = loadTsModule('worker/src/services/provider-cleanup-service.ts', {
   '../ids': { newId: (prefix) => `${prefix}_test`, nowIso: () => '2026-06-15T00:00:00.000Z' },
@@ -121,7 +122,14 @@ const cleanupService = loadTsModule('worker/src/services/provider-cleanup-servic
       ? { attempted: true, persisted: false, partial: false, errors: ['diagnostics unavailable'] }
       : { attempted: true, persisted: true, partial: false, errors: [] },
   },
-  './tencent-eks-ci-service': { isTencentEksCiAutoCreateEipEnabled: () => true },
+  './tencent-eks-ci-service': {
+    isTencentEksCiAutoCreateEipEnabled: () => true,
+    describeTencentEksContainerInstances: async () => ({
+      request_id: 'req-cleanup-drift',
+      total_count: cleanupDriftInstances.length,
+      instances: cleanupDriftInstances,
+    }),
+  },
   './tencent-vpc-service': {
     cleanupTencentEksAutoCreatedEip: async (_env, hint) => {
       cleanupEipHints.push(hint);
@@ -335,8 +343,23 @@ const deletingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-
     throw new Error(`unexpected Tencent action ${action}`);
   },
 });
-const confirmedDelete = await deletingTencentService.deleteTencentEksContainerInstances(tencentLiveEnv, ['eksci-fixture']);
-assert.deepEqual(deleteActions, ['DeleteEKSContainerInstances', 'DescribeEKSContainerInstances']);
+const deleteConfirmationOptions = {
+  confirmation_attempts: 4,
+  confirmation_delay_ms: 0,
+  required_consecutive_absence: 2,
+};
+const confirmedDelete = await deletingTencentService.deleteTencentEksContainerInstances(
+  tencentLiveEnv,
+  ['eksci-fixture'],
+  deleteConfirmationOptions,
+);
+assert.deepEqual(deleteActions, [
+  'DeleteEKSContainerInstances',
+  'DescribeEKSContainerInstances',
+  'DescribeEKSContainerInstances',
+  'DescribeEKSContainerInstances',
+  'DescribeEKSContainerInstances',
+]);
 assert.deepEqual(deletePayload, { EksCiIds: ['eksci-fixture'], ReleaseAutoCreatedEip: true });
 assert.equal(confirmedDelete.deleted, true);
 assert.equal(confirmedDelete.already_absent, false);
@@ -427,7 +450,70 @@ const duplicateDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-
 }, {
   fetch: async () => jsonResponse({ Response: { Error: { Code: 'ResourceNotFound.EksCi', Message: 'already gone' }, RequestId: 'req-absent' } }),
 });
-assert.equal((await duplicateDeleteService.deleteTencentEksContainerInstances(tencentLiveEnv, ['eksci-absent'])).already_absent, true);
+assert.equal((await duplicateDeleteService.deleteTencentEksContainerInstances(
+  tencentLiveEnv,
+  ['eksci-absent'],
+  deleteConfirmationOptions,
+)).already_absent, true);
+
+const reappearingDescribeSequence = [false, false, true, false];
+let reappearingDescribeIndex = 0;
+const reappearingDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async (_url, init) => {
+    const action = new Headers(init.headers).get('X-TC-Action');
+    if (action === 'DeleteEKSContainerInstances') return jsonResponse({ Response: { RequestId: 'req-delete-reappearing' } });
+    if (action === 'DescribeEKSContainerInstances') {
+      const exists = reappearingDescribeSequence[reappearingDescribeIndex++];
+      return jsonResponse({ Response: {
+        RequestId: `req-describe-reappearing-${reappearingDescribeIndex}`,
+        TotalCount: exists ? 1 : 0,
+        EksCis: exists ? [{ EksCiId: 'eksci-reappearing' }] : [],
+      } });
+    }
+    throw new Error(`unexpected Tencent action ${action}`);
+  },
+});
+await assert.rejects(
+  reappearingDeleteService.deleteTencentEksContainerInstances(
+    tencentLiveEnv,
+    ['eksci-reappearing'],
+    deleteConfirmationOptions,
+  ),
+  /stable absence is not confirmed/,
+  'a temporarily absent instance that reappears must keep cleanup pending',
+);
+
+const convergingDescribeSequence = [true, false, false, false];
+let convergingDescribeIndex = 0;
+const convergingDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async (_url, init) => {
+    const action = new Headers(init.headers).get('X-TC-Action');
+    if (action === 'DeleteEKSContainerInstances') return jsonResponse({ Response: { RequestId: 'req-delete-converging' } });
+    if (action === 'DescribeEKSContainerInstances') {
+      const exists = convergingDescribeSequence[convergingDescribeIndex++];
+      return jsonResponse({ Response: {
+        RequestId: `req-describe-converging-${convergingDescribeIndex}`,
+        TotalCount: exists ? 1 : 0,
+        EksCis: exists ? [{ EksCiId: 'eksci-converging' }] : [],
+      } });
+    }
+    throw new Error(`unexpected Tencent action ${action}`);
+  },
+});
+const convergedDelete = await convergingDeleteService.deleteTencentEksContainerInstances(
+  tencentLiveEnv,
+  ['eksci-converging'],
+  deleteConfirmationOptions,
+);
+assert.equal(convergedDelete.deleted, true);
 
 const reconcileActions = [];
 const reconcilingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
@@ -450,7 +536,9 @@ assert.deepEqual(reconcileActions, ['CreateEKSContainerInstances', 'DescribeEKSC
 assert.equal(reconciledLaunch.provider_job_id, 'eksci-reconciled');
 assert.equal(tencentService.buildCreateEksContainerInstancesRequest({ ...tencentEnv, TENCENT_EKS_CI_AUTO_CREATE_EIP: 'false' }, tencentInput).AutoCreateEip, undefined);
 const tencentServiceSource = readFileSync(resolve(root, 'worker/src/services/tencent-eks-ci-service.ts'), 'utf8');
-assert.match(tencentServiceSource, /delete accepted but absence is not yet confirmed/, 'cleanup must not complete before Describe confirms absence');
+assert.match(tencentServiceSource, /stable absence is not confirmed/, 'cleanup must not complete before the full stabilization window confirms absence');
+assert.match(tencentServiceSource, /attempt < attempts/, 'cleanup must observe the full bounded stabilization window');
+assert.match(tencentServiceSource, /consecutiveAbsence >= requiredConsecutiveAbsence/, 'cleanup must require consecutive absence observations');
 assert.throws(() => tencentService.buildCreateEksContainerInstancesRequest({ ...tencentEnv, TENCENT_EKS_CI_IMAGE: 'ccr.ccs.tencentyun.com/scan-agent/scan-agent:latest' }, tencentInput), /immutable sha256 digest/);
 assert.throws(() => tencentService.buildCreateEksContainerInstancesRequest({ ...tencentEnv, TENCENT_TCR_SERVER: 'ccr.ccs.tencentyun.com' }, tencentInput), /configured together/);
 const signedTencent = await tencentService.buildTencentTc3Request('DescribeEKSContainerInstances', { Limit: 1, Offset: 0 }, 'ap-shanghai', 'AKIDEXAMPLE', 'SECRETKEYEXAMPLE', 1700000000);
@@ -559,6 +647,37 @@ const dryCleanup = await cleanupService.cleanupProviderRun(cleanupEnv, { id: 'ru
 assert.equal(dryCleanup.attempted, false);
 assert.equal(dryCleanup.completed, true);
 
+const cleanupDriftWrites = [];
+const cleanupDriftEnv = {
+  TENCENT_EKS_CI_REGION: 'ap-chengdu',
+  TENCENT_SECRET_ID: 'AKIDEXAMPLE',
+  TENCENT_SECRET_KEY: 'SECRETKEYEXAMPLE',
+  DB: {
+    prepare: (sql) => ({
+      bind: (...values) => ({
+        first: async () => ({
+          id: 'run-drift',
+          task_id: 'task-drift',
+          status: 'success',
+          provider_cleanup_completed_at: '2026-08-16T17:10:38.430Z',
+        }),
+        run: async () => {
+          cleanupDriftWrites.push({ sql, values });
+          return { success: true, meta: { changes: 1 } };
+        },
+      }),
+    }),
+  },
+};
+cleanupDriftInstances = [{ EksCiId: 'eksci-drift', EksCiName: 'scan-run-drift', Status: 'Running' }];
+const cleanupDrift = await cleanupService.reconcileProviderCleanupDrift(cleanupDriftEnv);
+assert.equal(cleanupDrift.cloud_checked, true);
+assert.equal(cleanupDrift.observed_scan_instances, 1);
+assert.equal(cleanupDrift.reopened, 1);
+assert.ok(cleanupDriftWrites.some((write) => write.sql.includes('provider_cleanup_completed_at = NULL')));
+assert.ok(cleanupDriftWrites.some((write) => write.values.includes('provider.cleanup.drift_reopened')));
+cleanupDriftInstances = [];
+
 console.log(JSON.stringify({
   ok: true,
   classification_matrix: [
@@ -589,7 +708,9 @@ console.log(JSON.stringify({
     transient_mixed: { retryable: retrySummary.retryable, errors: retrySummary.errors.map((err) => ({ category: err.category, retryable: err.retryable })) },
   },
   tencent_api_fixtures: {
-    delete_then_describe_absence: confirmedDelete.deleted,
+    stable_delete_confirmation: confirmedDelete.deleted,
+    false_absence_reappearance_rejected: reappearingDescribeIndex === reappearingDescribeSequence.length,
+    eventual_delete_convergence_accepted: convergedDelete.deleted,
     duplicate_delete_is_idempotent: true,
     create_timeout_reconciled_by_name: reconciledLaunch.provider_job_id,
     cleanup_failure_recorded_for_retry: cleanupFailure.completed === false,
@@ -597,6 +718,7 @@ console.log(JSON.stringify({
     eip_release_failure_recorded_for_retry: cleanupEipFailure.completed === false,
     startup_diagnostics_persisted: diagnosticsSuccess.persisted,
     event_failure_is_non_blocking: partialDiagnostics.partial && cleanupAfterDiagnosticsFailure.completed,
+    completed_cleanup_drift_reopened: cleanupDrift.reopened === 1,
   },
   network: 'not used',
   cloud_credentials: 'not used',
