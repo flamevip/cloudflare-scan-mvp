@@ -135,7 +135,7 @@ Content-Type: application/json
 1. `agent_runs.provider_job_id` 为一个真实 `eksci-*` ID，`provider_egress_ip` 在首次 callback 后为腾讯公网地址；
 2. 收到持续 heartbeat、ingest 和 complete；
 3. 任务和 run 进入成功终态；
-4. Delete 成功，5 分钟内至少连续 3 次 Describe 都确认实例数为 0；
+4. Delete 请求成功后，在一个共享的 10 分钟收敛窗口内确认 D1 cleanup 已完成，并至少连续 3 次 Describe 确认实例数为 0；该窗口覆盖腾讯异步删除传播和一次 `*/10` Cron 兜底，不得把两类检查串行成 20 分钟；
 5. 立即以 `enable_live_provider=false` 重新部署 staging，恢复 dry-run。
 
 ## 7. pilot 完整工具链验收
