@@ -83,9 +83,9 @@ assert.match(stagingAcceptanceWorkflow, /TASK_MAX_RETRY = \\"1\\"','TASK_MAX_RET
 assert.match(stagingAcceptanceWorkflow, /name: Refresh staging dry-run Worker/);
 assert.match(stagingAcceptanceWorkflow, /name: Verify zero-instance precondition[\s\S]*verify-dry-run/);
 assert.match(stagingAcceptanceWorkflow, /name: Verify live Queue consumer propagation[\s\S]*timeout-minutes: 3[\s\S]*verify-live-consumer/);
+assert.match(stagingAcceptanceWorkflow, /name: Run one real mock container acceptance[\s\S]*timeout-minutes: 20[\s\S]*ACCEPTANCE_CLEANUP_WAIT_MS: "600000"/);
 assert.match(stagingAcceptanceWorkflow, /name: Restore staging dry-run Worker[\s\S]*if: always\(\)/);
-assert.match(stagingAcceptanceWorkflow, /name: Verify rollback and Tencent cleanup[\s\S]*if: always\(\)/);
-assert.match(stagingAcceptanceWorkflow, /ACCEPTANCE_CLEANUP_WAIT_MS: \"300000\"/);
+assert.match(stagingAcceptanceWorkflow, /name: Verify rollback and Tencent cleanup[\s\S]*if: always\(\)[\s\S]*timeout-minutes: 12[\s\S]*ACCEPTANCE_CLEANUP_WAIT_MS: "600000"/);
 assert.match(stagingAcceptanceScript, /single-instance invariant violated/);
 assert.match(stagingAcceptanceScript, /refusing to start: Tencent EKS CI instance list is not empty/);
 assert.match(stagingAcceptanceScript, /refusing to start: staging has/);
@@ -96,6 +96,13 @@ assert.match(stagingAcceptanceScript, /live acceptance was consumed by a dry-run
 assert.match(stagingAcceptanceScript, /await waitForProviderMode\(false\)[\s\S]*await verifyConsumerCanary\(false\)/, 'live verification must wait for both HTTP and Queue propagation');
 assert.match(stagingAcceptanceScript, /await waitForProviderMode\(true\)[\s\S]*verifyConsumerCanary\(true\)/, 'rollback verification must wait for both HTTP and Queue propagation');
 assert.match(stagingAcceptanceScript, /waitForStableZeroInstances\(cleanupWaitMs[\s\S]*verifyConsumerCanary\(true\)/, 'dry-run verification must confirm stable Tencent absence before the guarded Queue consumer version');
+assert.match(stagingAcceptanceScript, /cleanupWaitMs = clampNumber\(process\.env\.ACCEPTANCE_CLEANUP_WAIT_MS, 10 \* 60_000/);
+assert.match(stagingAcceptanceScript, /waitForCleanupConvergence\(report, cleanupWaitMs\)/);
+assert.match(stagingAcceptanceScript, /const \[response, cloud\] = await Promise\.all/);
+assert.match(stagingAcceptanceScript, /cleanupComplete && consecutiveZero >= 3/, 'task cleanup must share one deadline for D1 completion and stable Tencent absence');
+assert.match(stagingAcceptanceScript, /cleanup_completed = Boolean\(run\.provider_cleanup_completed_at\)/, 'acceptance reports must reflect cleanup marker reopening as well as completion');
+assert.match(stagingAcceptanceScript, /provider_cleanup_last_error = run\.provider_cleanup_last_error \?\? null/, 'a successful cleanup retry must clear the stale report error');
+assert.doesNotMatch(stagingAcceptanceScript, /waitForCleanup\(report, 90_000\)|waitForStableZeroInstances\(90_000/, 'staging cleanup must not retain the obsolete 90-second observation windows');
 assert.match(stagingAcceptanceScript, /consecutiveZero >= 3/, 'staging acceptance must require three consecutive zero-instance observations');
 assert.doesNotMatch(stagingAcceptanceScript, /const preflight = await preflight\(\)/, 'preflight verification must not shadow its own function');
 assert.match(stagingRegistryDiagnosticWorkflow, /environment: staging/);

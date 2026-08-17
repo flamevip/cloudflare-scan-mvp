@@ -88,7 +88,9 @@ jobs:
         timeout-minutes: 3
         run: node scripts/run-staging-mock-acceptance.mjs verify-live-consumer
       - name: Run one real mock container acceptance
-        timeout-minutes: 10
+        timeout-minutes: 20
+        env:
+          ACCEPTANCE_CLEANUP_WAIT_MS: "600000"
         run: node scripts/run-staging-mock-acceptance.mjs run
       - name: Restore staging dry-run Worker
         if: always()
@@ -96,9 +98,9 @@ jobs:
         run: npx wrangler deploy --config work/wrangler.staging.toml
       - name: Verify rollback and Tencent cleanup
         if: always()
-        timeout-minutes: 7
+        timeout-minutes: 12
         env:
-          ACCEPTANCE_CLEANUP_WAIT_MS: "300000"
+          ACCEPTANCE_CLEANUP_WAIT_MS: "600000"
         run: node scripts/run-staging-mock-acceptance.mjs verify-dry-run
       - name: Upload sanitized acceptance report
         if: always()

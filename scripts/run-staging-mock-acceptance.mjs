@@ -7,9 +7,9 @@ const mode = process.argv[2] ?? 'run';
 const reportPath = process.env.ACCEPTANCE_REPORT_PATH ?? 'work/staging-mock-acceptance.json';
 const pollIntervalMs = clampNumber(process.env.ACCEPTANCE_POLL_INTERVAL_MS, 10_000, 1_000, 30_000);
 const maxWaitMs = clampNumber(process.env.ACCEPTANCE_MAX_WAIT_MS, 5 * 60_000, 60_000, 6 * 60_000);
+const cleanupWaitMs = clampNumber(process.env.ACCEPTANCE_CLEANUP_WAIT_MS, 10 * 60_000, 30_000, 12 * 60_000);
 
 if (mode === 'verify-dry-run') {
-  const cleanupWaitMs = clampNumber(process.env.ACCEPTANCE_CLEANUP_WAIT_MS, 30_000, 15_000, 5 * 60_000);
   await waitForProviderMode(true);
   await waitForStableZeroInstances(cleanupWaitMs, 'staging.acceptance.cleanup_wait');
   await verifyConsumerCanary(true);
@@ -39,6 +39,7 @@ const report = {
   provider_diagnostics: null,
   provider_cleanup_attempts: 0,
   provider_cleanup_last_error: null,
+  provider_cleanup_completed_at: null,
 };
 
 let terminalError = null;
@@ -116,16 +117,18 @@ try {
 
   if (report.task_id) {
     try {
-      await waitForCleanup(report, 90_000);
+      await waitForCleanupConvergence(report, cleanupWaitMs);
+      report.tencent_instance_count_after = 0;
     } catch (error) {
       terminalError ??= error;
     }
-  }
-  try {
-    await waitForStableZeroInstances(90_000, 'staging.acceptance.post_task_cleanup_wait');
-    report.tencent_instance_count_after = 0;
-  } catch (error) {
-    terminalError ??= error;
+  } else {
+    try {
+      await waitForStableZeroInstances(cleanupWaitMs, 'staging.acceptance.post_task_cleanup_wait');
+      report.tencent_instance_count_after = 0;
+    } catch (error) {
+      terminalError ??= error;
+    }
   }
   if (!terminalError) {
     try {
@@ -158,17 +161,34 @@ console.log(JSON.stringify({
   tencent_instance_count_after: report.tencent_instance_count_after,
 }));
 
-async function waitForCleanup(targetReport, timeoutMs) {
+async function waitForCleanupConvergence(targetReport, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveZero = 0;
+  let instanceCount = -1;
+  let cleanupComplete = false;
   while (Date.now() < deadline) {
-    const response = await api(`/api/tasks/${encodeURIComponent(targetReport.task_id)}/agent-runs`);
+    const [response, cloud] = await Promise.all([
+      api(`/api/tasks/${encodeURIComponent(targetReport.task_id)}/agent-runs`),
+      getPreflight(),
+    ]);
     const runs = response.items ?? [];
     assert.ok(runs.length <= 1, `single-instance invariant violated during cleanup: ${runs.length} runs`);
     const run = runs[0] ?? null;
     if (run) updateReportFromRun(targetReport, run);
-    if (!run || targetReport.cleanup_completed) return;
+    assert.equal(cloud.cloud_check?.ok, true, 'Tencent read-only preflight failed during cleanup confirmation');
+    instanceCount = Number(cloud.cloud_check?.total_count ?? -1);
+    consecutiveZero = instanceCount === 0 ? consecutiveZero + 1 : 0;
+    cleanupComplete = !run || targetReport.cleanup_completed;
+    console.log(JSON.stringify({
+      event: 'staging.acceptance.post_task_cleanup_wait',
+      cleanup_completed: cleanupComplete,
+      tencent_instance_count: instanceCount,
+      consecutive_zero_observations: consecutiveZero,
+    }));
+    if (cleanupComplete && consecutiveZero >= 3) return;
     await delay(5_000);
   }
+  throw new Error(`provider cleanup did not converge: cleanup_completed=${cleanupComplete}, count=${instanceCount}, consecutive_zero_observations=${consecutiveZero}`);
 }
 
 async function waitForStableZeroInstances(timeoutMs, event) {
@@ -193,9 +213,10 @@ function updateReportFromRun(targetReport, run) {
   targetReport.provider_job_id ??= run.provider_job_id ?? null;
   targetReport.provider_eip_id ??= run.provider_eip_id ?? null;
   targetReport.provider_egress_ip ??= run.provider_egress_ip ?? null;
-  targetReport.cleanup_completed ||= Boolean(run.provider_cleanup_completed_at);
+  targetReport.cleanup_completed = Boolean(run.provider_cleanup_completed_at);
+  targetReport.provider_cleanup_completed_at = run.provider_cleanup_completed_at ?? null;
   targetReport.provider_cleanup_attempts = Number(run.provider_cleanup_attempts ?? targetReport.provider_cleanup_attempts ?? 0);
-  targetReport.provider_cleanup_last_error = run.provider_cleanup_last_error ?? targetReport.provider_cleanup_last_error ?? null;
+  targetReport.provider_cleanup_last_error = run.provider_cleanup_last_error ?? null;
   targetReport.provider_diagnostics = {
     status: run.provider_status ?? null,
     container_state: run.provider_container_state ?? null,
