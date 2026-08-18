@@ -147,6 +147,7 @@ const cleanupService = loadTsModule('worker/src/services/provider-cleanup-servic
     }),
   },
   './tencent-vpc-service': {
+    discoverTencentEksAutoCreatedEip: async () => ({ provider_eip_id: null, provider_egress_ip: null }),
     cleanupTencentEksAutoCreatedEip: async (_env, hint) => {
       cleanupEipHints.push(hint);
       if (cleanupEipMode === 'failure') throw providerErrors.classifyTencentProviderCode('InternalError.CmdTimeout', 500, 'EIP cleanup timeout');
@@ -417,6 +418,23 @@ assert.deepEqual(vpcPayloads[0], { Limit: 2, Offset: 0, Filters: [{ Name: 'addre
 assert.deepEqual(vpcPayloads[1], { AddressIds: ['eip-orphan'] });
 assert.equal(eipCleanup.released, true);
 assert.equal(eipCleanup.address_id, 'eip-orphan');
+
+const discoveryTencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async (_url, init) => {
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get('X-TC-Action'), 'DescribeAddresses');
+    const payload = JSON.parse(init.body);
+    assert.deepEqual(payload, { Limit: 2, Offset: 0, Filters: [{ Name: 'instance-id', Values: ['eksci-fixture'] }] });
+    return jsonResponse({ Response: { RequestId: 'req-vpc-discovery', TotalCount: 1, AddressSet: [{ AddressId: 'eip-discovered', AddressIp: '43.136.10.22', AddressStatus: 'BIND', AddressType: 'EIP', InstanceId: 'eksci-fixture', InstanceType: 'EKS' }] } });
+  },
+});
+const discoveredEip = await discoveryTencentVpcService.discoverTencentEksAutoCreatedEip(tencentLiveEnv, 'eksci-fixture');
+assert.equal(discoveredEip.provider_eip_id, 'eip-discovered');
+assert.equal(discoveredEip.provider_egress_ip, '43.136.10.22');
 
 const refusingTencentVpcService = loadTsModule('worker/src/services/tencent-vpc-service.ts', {
   './provider-errors': providerErrors,

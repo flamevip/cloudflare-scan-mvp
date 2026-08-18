@@ -5,7 +5,7 @@ import { deleteAgentProviderJob, type ExternalAgentProvider } from './agent-prov
 import { ProviderLaunchError, serializeProviderError, toProviderLaunchError } from './provider-errors';
 import { collectProviderDiagnostics } from './provider-diagnostics-service';
 import { describeTencentEksContainerInstances, isTencentEksCiAutoCreateEipEnabled } from './tencent-eks-ci-service';
-import { cleanupTencentEksAutoCreatedEip } from './tencent-vpc-service';
+import { cleanupTencentEksAutoCreatedEip, discoverTencentEksAutoCreatedEip } from './tencent-vpc-service';
 
 export const MAX_CLEANUP_ATTEMPTS = 5;
 export const MAX_QUEUE_CLEANUP_RETRIES = 6;
@@ -74,8 +74,29 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
     }));
   }
   try {
-    const eipHint = await loadCleanupEipHint(env, run);
+    let eipHint = await loadCleanupEipHint(env, run);
     const autoEipEnabled = isTencentEksCiAutoCreateEipEnabled(env.TENCENT_EKS_CI_AUTO_CREATE_EIP);
+    if (autoEipEnabled && !eipHint.provider_eip_id && !eipHint.provider_egress_ip) {
+      // Cancellation can race with TKE provisioning: the TKE instance may
+      // already exist while its EIP fields are not present in DescribeEKS.
+      // Resolve the exact address through VPC while it is still bound to the
+      // provider job, then persist the hint before deleting the instance.
+      try {
+        const discovered = await discoverTencentEksAutoCreatedEip(env, run.provider_job_id);
+        if (discovered.provider_eip_id || discovered.provider_egress_ip) {
+          eipHint = discovered;
+          await persistCleanupEipHint(env, run, discovered);
+        }
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: 'provider.cleanup.eip_discovery_failed',
+          task_id: run.task_id,
+          agent_run_id: run.id,
+          provider_job_id: run.provider_job_id,
+          error: toProviderLaunchError(error, 'tencent_eks_ci').safe_message,
+        }));
+      }
+    }
     if (autoEipEnabled && !eipHint.provider_eip_id && !eipHint.provider_egress_ip) {
       throw new ProviderLaunchError({
         provider: 'tencent_eks_ci',
@@ -291,6 +312,20 @@ async function markCleanupCompleted(env: Env, agentRunId: string, taskId: string
         updated_at = ?
     WHERE id = ? AND task_id = ?
   `).bind(now, now, agentRunId, taskId).run();
+}
+
+async function persistCleanupEipHint(
+  env: Env,
+  run: CleanupRunRow,
+  hint: { provider_eip_id: string | null; provider_egress_ip: string | null },
+): Promise<void> {
+  await env.DB.prepare(`
+    UPDATE agent_runs
+    SET provider_eip_id = COALESCE(provider_eip_id, ?),
+        provider_egress_ip = COALESCE(provider_egress_ip, ?),
+        updated_at = ?
+    WHERE id = ? AND task_id = ? AND provider_cleanup_completed_at IS NULL
+  `).bind(hint.provider_eip_id, hint.provider_egress_ip, nowIso(), run.id, run.task_id).run();
 }
 
 async function recordCleanupIssue(env: Env, run: CleanupRunRow, error: string, pending: boolean): Promise<number> {
