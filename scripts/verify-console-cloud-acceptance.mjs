@@ -7,6 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workflow = text('.github/workflows/console-cloud-acceptance.yml');
 const runner = text('scripts/run-console-cloud-acceptance.mjs');
 const identities = text('scripts/manage-console-acceptance-identities.mjs');
+const fixture = text('scripts/manage-console-acceptance-fixture.mjs');
 const inventory = text('scripts/inspect-tencent-resource-inventory.mjs');
 
 assert.match(workflow, /name: console-cloud-acceptance/);
@@ -19,6 +20,8 @@ assert.match(workflow, /manage-pilot-acceptance-token\.mjs create/);
 assert.match(workflow, /if: always\(\) && inputs\.environment == 'pilot' && steps\.pilot_token\.outcome == 'success'/);
 assert.match(workflow, /manage-console-acceptance-identities\.mjs create/);
 assert.match(workflow, /if: always\(\) && steps\.identities\.outcome == 'success'/);
+assert.match(workflow, /name: Create a no-cloud artifact acceptance fixture[\s\S]*manage-console-acceptance-fixture\.mjs create/);
+assert.match(workflow, /name: Remove the artifact acceptance fixture[\s\S]*if: always\(\)[\s\S]*wrangler r2 object delete[\s\S]*cleanup_failed[\s\S]*manage-console-acceptance-fixture\.mjs revoke/);
 assert.match(workflow, /inspect-tencent-resource-inventory\.mjs/);
 assert.match(workflow, /retention-days: 30/);
 assert.doesNotMatch(workflow, /wrangler deploy|TENCENT_EKS_CI_DRY_RUN = "false"|run-pilot-acceptance\.mjs run/, 'console acceptance must never deploy or enable the live Provider');
@@ -43,6 +46,13 @@ assert.match(identities, /expiresAt = new Date\(Date\.now\(\) \+ 2 \* 60 \* 60_0
 assert.match(identities, /UPDATE api_tokens SET revoked_at = COALESCE/);
 assert.match(identities, /UPDATE project_memberships SET status = [^\n]*disabled/);
 assert.doesNotMatch(identities, /console\.log\([^\n]*(rawToken|\.token)/, 'acceptance token plaintext must never be logged');
+
+assert.match(fixture, /provider, provider_job_id, status[\s\S]*'mock_inline'/);
+assert.match(fixture, /workerApi\('\/api\/agent\/ingest'/);
+assert.match(fixture, /workerApi\('\/api\/agent\/complete'/);
+assert.match(fixture, /DELETE FROM artifacts WHERE task_id = \?/);
+assert.match(fixture, /r2_cleanup_confirmed: true/);
+assert.doesNotMatch(fixture, /tencent_eks_ci|CreateEKSContainerInstances/, 'artifact fixture must not use Tencent cloud');
 
 assert.match(inventory, /DescribeEKSContainerInstances/);
 assert.match(inventory, /DescribeAddresses/);
