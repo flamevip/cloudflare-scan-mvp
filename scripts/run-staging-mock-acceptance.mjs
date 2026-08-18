@@ -11,6 +11,12 @@ const cleanupWaitMs = clampNumber(process.env.ACCEPTANCE_CLEANUP_WAIT_MS, 10 * 6
 
 if (mode === 'verify-dry-run') {
   await waitForProviderMode(true);
+  const initial = await getPreflight();
+  console.log(JSON.stringify({
+    event: 'staging.acceptance.observed_instances',
+    tencent_instance_count: initial.cloud_check?.total_count ?? null,
+    instances: initial.cloud_check?.instances ?? [],
+  }));
   await waitForStableZeroInstances(cleanupWaitMs, 'staging.acceptance.cleanup_wait');
   await verifyConsumerCanary(true);
   console.log(JSON.stringify({ event: 'staging.acceptance.rollback_verified', dry_run: true, tencent_instance_count: 0 }));
