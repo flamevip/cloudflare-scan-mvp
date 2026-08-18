@@ -140,13 +140,17 @@ async function acceptOperator() {
         assert.equal(await checkbox.isChecked(), true);
         assert.equal(await checkbox.isDisabled(), true);
       }
-      assert.equal(await page.getByText(/Hunter/i).count(), 0, 'pilot UI must not expose Hunter');
+      assert.equal(await page.getByLabel(/Hunter/i).count(), 0, 'pilot UI must not expose a Hunter form control');
+      assert.equal(await page.getByRole('button', { name: /Hunter/i }).count(), 0, 'pilot UI must not expose a Hunter action');
       await page.getByRole('button', { name: '取消', exact: true }).click();
       return { role: 'operator', pilot_policy_locked: true, task_submitted: false };
     }
 
+    const projectScope = JSON.parse(projects[0].scope_json || '[]');
+    assert.ok(Array.isArray(projectScope) && typeof projectScope[0] === 'string' && projectScope[0], 'staging project has no authorized root domain');
+    const stagingTarget = projectScope[0];
     await page.getByLabel('任务名称').fill(`staging console acceptance ${process.env.GITHUB_RUN_ID ?? 'local'}`);
-    await page.getByLabel(/根域名目标/).fill('70yun.xyz');
+    await page.getByLabel(/根域名目标/).fill(stagingTarget);
     const createdResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tasks');
     await page.getByRole('button', { name: '创建任务', exact: true }).click();
     const created = await parseApiResponse(await createdResponse, 200);
@@ -161,7 +165,7 @@ async function acceptOperator() {
     await page.getByRole('button', { name: '确认取消' }).click();
     const cancelled = await parseApiResponse(await cancelResponse, 200);
     assert.equal(cancelled.data?.status, 'cancelled');
-    return { role: 'operator', staging_dry_run_task_id: taskId, cancelled: true };
+    return { role: 'operator', staging_dry_run_task_id: taskId, staging_target: stagingTarget, cancelled: true };
   });
 }
 
