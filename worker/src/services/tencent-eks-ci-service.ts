@@ -304,7 +304,12 @@ async function confirmTencentEksDeletion(
       lastDescribeRequestId = confirmation.request_id;
       const returnedIds = new Set(confirmation.instances.map((instance) => instance.EksCiId).filter((id): id is string => Boolean(id)));
       const exactRemaining = ids.filter((id) => returnedIds.has(id));
-      const absent = confirmation.total_count === 0 && exactRemaining.length === 0;
+      // DescribeEKSContainerInstances may report a non-zero TotalCount for
+      // the account even when an ID-filtered response contains no matching
+      // instance. When confirming deletion of a specific container, the
+      // authoritative signal is whether any requested ID is still returned;
+      // relying on the aggregate count can leave cleanup pending forever.
+      const absent = exactRemaining.length === 0;
       consecutiveAbsence = absent ? consecutiveAbsence + 1 : 0;
       lastRemaining = absent ? [] : exactRemaining.length ? exactRemaining : [...ids];
     } catch (error) {

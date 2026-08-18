@@ -552,6 +552,36 @@ const convergedDelete = await convergingDeleteService.deleteTencentEksContainerI
 );
 assert.equal(convergedDelete.deleted, true);
 
+// An ID-filtered Tencent Describe response can carry the account-wide
+// TotalCount even when the requested container is absent. Cleanup must use
+// the filtered ID list rather than the aggregate count for this confirmation.
+let aggregateCountDescribeIndex = 0;
+const aggregateCountDeleteService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
+  './provider-errors': providerErrors,
+  './provider-egress-service': providerEgressService,
+  './tencent-tc3-service': tencentTc3Service,
+}, {
+  fetch: async (_url, init) => {
+    const action = new Headers(init.headers).get('X-TC-Action');
+    if (action === 'DeleteEKSContainerInstances') return jsonResponse({ Response: { RequestId: 'req-delete-aggregate-count' } });
+    if (action === 'DescribeEKSContainerInstances') {
+      aggregateCountDescribeIndex += 1;
+      return jsonResponse({ Response: {
+        RequestId: `req-describe-aggregate-count-${aggregateCountDescribeIndex}`,
+        TotalCount: 1,
+        EksCis: [],
+      } });
+    }
+    throw new Error(`unexpected Tencent action ${action}`);
+  },
+});
+const aggregateCountDelete = await aggregateCountDeleteService.deleteTencentEksContainerInstances(
+  tencentLiveEnv,
+  ['eksci-aggregate-count'],
+  deleteConfirmationOptions,
+);
+assert.equal(aggregateCountDelete.deleted, true, 'aggregate Tencent count must not block ID-filtered deletion confirmation');
+
 const reconcileActions = [];
 const reconcilingTencentService = loadTsModule('worker/src/services/tencent-eks-ci-service.ts', {
   './provider-errors': providerErrors,
