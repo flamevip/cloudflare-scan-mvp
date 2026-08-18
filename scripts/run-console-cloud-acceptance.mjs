@@ -201,20 +201,13 @@ async function acceptLimitedScope() {
 }
 
 async function acceptTaskDetailAndArtifact(page, context, token) {
-  const taskPage = await apiRequest(context, token, '/api/tasks?page=1&page_size=100', [200]);
-  const tasks = taskPage.envelope.data?.items ?? [];
-  assert.ok(tasks.length, 'cloud environment has no task available for task-detail acceptance');
-  let selected = null;
-  let artifact = null;
-  for (const candidate of tasks.filter((task) => Number(task.artifact_count ?? 0) > 0).slice(0, 20)) {
-    const response = await apiRequest(context, token, `/api/artifacts?task_id=${encodeURIComponent(candidate.id)}`, [200]);
-    if (response.envelope.data?.items?.length) {
-      selected = candidate;
-      artifact = response.envelope.data.items[0];
-      break;
-    }
-  }
-  assert.ok(selected && artifact, 'cloud environment has no downloadable task artifact');
+  const fixtureTaskId = `task_console_acceptance_${required('GITHUB_RUN_ID').replace(/[^0-9]/g, '')}`;
+  const taskResponse = await apiRequest(context, token, `/api/tasks/${encodeURIComponent(fixtureTaskId)}`, [200]);
+  const selected = taskResponse.envelope.data;
+  assert.equal(selected?.id, fixtureTaskId, 'cloud environment did not return the current acceptance fixture task');
+  const artifactsResponse = await apiRequest(context, token, `/api/artifacts?task_id=${encodeURIComponent(fixtureTaskId)}`, [200]);
+  const artifact = artifactsResponse.envelope.data?.items?.[0];
+  assert.ok(artifact, 'current acceptance fixture has no downloadable task artifact');
   await goto(page, `/tasks/${encodeURIComponent(selected.id)}`);
   await visible(page.getByText('工具链模块'));
   for (const tab of ['概览', 'Shard', 'Agent Run', 'Assets', 'Findings', 'Artifacts']) {
