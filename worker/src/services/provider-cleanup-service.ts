@@ -97,7 +97,13 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
         }));
       }
     }
-    if (autoEipEnabled && !eipHint.provider_eip_id && !eipHint.provider_egress_ip) {
+    const hasEipIdentity = Boolean(eipHint.provider_eip_id || eipHint.provider_egress_ip);
+    // After a bounded number of discovery attempts, Tencent's Delete API is
+    // still safe to invoke with ReleaseAutoCreatedEip=true. This is the final
+    // escape hatch for a provisioning/cancel race where the EIP is not exposed
+    // by either TKE or VPC; keeping the instance alive would continue billing.
+    const mayDeleteWithoutEipIdentity = currentAttempts >= 3;
+    if (autoEipEnabled && !hasEipIdentity && !mayDeleteWithoutEipIdentity) {
       throw new ProviderLaunchError({
         provider: 'tencent_eks_ci',
         phase: 'cleanup',
@@ -107,7 +113,7 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
       });
     }
     const result = await deleteAgentProviderJob(env, run.provider as ExternalAgentProvider, run.provider_job_id);
-    const eipCleanup = autoEipEnabled
+    const eipCleanup = autoEipEnabled && hasEipIdentity
       ? await cleanupTencentEksAutoCreatedEip(env, {
         provider_job_id: run.provider_job_id,
         provider_eip_id: eipHint.provider_eip_id,
@@ -120,6 +126,7 @@ export async function cleanupProviderRun(env: Env, run: CleanupRunRow): Promise<
       provider: run.provider,
       already_absent: result.already_absent,
       eip_cleanup: eipCleanup,
+      eip_cleanup_deferred: autoEipEnabled && !hasEipIdentity,
     });
     console.log(JSON.stringify({ event: 'provider.cleanup.completed', task_id: run.task_id, agent_run_id: run.id, provider: run.provider, provider_job_id: run.provider_job_id, provider_eip_id: eipCleanup.address_id, eip_released: eipCleanup.released, eip_already_absent: eipCleanup.already_absent, already_absent: result.already_absent }));
     return cleanupResult('completed', currentAttempts, true, true, result.already_absent, null);

@@ -1,16 +1,8 @@
 # Cloudflare Scan MVP
 
-## 当前腾讯 P1 基线（2026-08-11）
-
-- 本地 `wrangler.toml` 固定使用 `mock_inline + dev-token + mock`，不调用腾讯 API。
-- staging/pilot 使用 `config/wrangler.tencent.template.toml` 和受保护 GitHub Environments；两套 Cloudflare 与腾讯网络/CAM 资源相互隔离。
-- D1 当前 additive migration 为 `0001`–`0010`；`0008` 加入管理、保留和取消字段，`0009` 加入竞态保护，`0010` 记录每次运行的腾讯 EIP ID 与实际出口 IP。
-- pilot 固定单授权根域名、单 Agent、`rate_limit=1`、最多 100 候选、最长 15 分钟、无 Hunter，并强制 `subdomain + http_probe + nuclei`。
-- 腾讯实例终态、主动取消、心跳超时和任务总超时都会进入 Delete/定时清理闭环；迟到的 Create 返回也会重新登记并清理。
-- 完整部署、验收和回滚步骤以 `docs/tencent-eks-ci-e2e-runbook.md` 为准。仓库实现不代表真实腾讯 apply、镜像推送或授权域名扫描已经执行。
-
-本地验收命令：
-
+## 褰撳墠鑵捐 P1 鍩虹嚎锛?026-08-11锛?
+- 鏈湴 `wrangler.toml` 鍥哄畾浣跨敤 `mock_inline + dev-token + mock`锛屼笉璋冪敤鑵捐 API銆?- staging/pilot 浣跨敤 `config/wrangler.tencent.template.toml` 鍜屽彈淇濇姢 GitHub Environments锛涗袱濂?Cloudflare 涓庤吘璁綉缁?CAM 璧勬簮鐩镐簰闅旂銆?- D1 褰撳墠 additive migration 涓?`0001`鈥揱0010`锛沗0008` 鍔犲叆绠＄悊銆佷繚鐣欏拰鍙栨秷瀛楁锛宍0009` 鍔犲叆绔炴€佷繚鎶わ紝`0010` 璁板綍姣忔杩愯鐨勮吘璁?EIP ID 涓庡疄闄呭嚭鍙?IP銆?- pilot 鍥哄畾鍗曟巿鏉冩牴鍩熷悕銆佸崟 Agent銆乣rate_limit=1`銆佹渶澶?100 鍊欓€夈€佹渶闀?15 鍒嗛挓銆佹棤 Hunter锛屽苟寮哄埗 `subdomain + http_probe + nuclei`銆?- 鑵捐瀹炰緥缁堟€併€佷富鍔ㄥ彇娑堛€佸績璺宠秴鏃跺拰浠诲姟鎬昏秴鏃堕兘浼氳繘鍏?Delete/瀹氭椂娓呯悊闂幆锛涜繜鍒扮殑 Create 杩斿洖涔熶細閲嶆柊鐧昏骞舵竻鐞嗐€?- 瀹屾暣閮ㄧ讲銆侀獙鏀跺拰鍥炴粴姝ラ浠?`docs/tencent-eks-ci-e2e-runbook.md` 涓哄噯銆備粨搴撳疄鐜颁笉浠ｈ〃鐪熷疄鑵捐 apply銆侀暅鍍忔帹閫佹垨鎺堟潈鍩熷悕鎵弿宸茬粡鎵ц銆?
+鏈湴楠屾敹鍛戒护锛?
 ```bash
 npm run typecheck
 npm run verify:p0
@@ -20,20 +12,16 @@ npm run verify:p1:e2e
 npm run verify:web
 ```
 
-独立的 Cloudflare 按需扫描 MVP 工程。当前 Phase 1 目标是跑通：
+鐙珛鐨?Cloudflare 鎸夐渶鎵弿 MVP 宸ョ▼銆傚綋鍓?Phase 1 鐩爣鏄窇閫氾細
 
 ```text
-POST /api/tasks -> D1/R2/Queue -> mock agent heartbeat/ingest/complete -> assets/findings/artifacts 可查询
-```
+POST /api/tasks -> D1/R2/Queue -> mock agent heartbeat/ingest/complete -> assets/findings/artifacts 鍙煡璇?```
 
 ## P1 Tencent pilot implementation
 
-仓库现已包含腾讯 EKS Container Instances 生产试运行所需的代码路径：任务取消、持续 Agent 心跳、总执行时限、DNS 私网地址拒绝、Token/成员管理、项目级保留策略、审计与运维查询、终态实例清理、staging/pilot 配置模板、腾讯 Terraform 和受保护的 GitHub Actions。
-
-安全边界：默认 `wrangler.toml` 始终为本地 `mock_inline`；腾讯配置必须通过 `config/wrangler.tencent.template.toml` 渲染。staging 默认为 application dry-run，pilot 只能在明确批准的目标、网络、镜像摘要和成本上限下关闭 dry-run。真实完整工具链固定为单 Agent、无 Hunter、无用户模板，并使用镜像内固定 commit 的 Nuclei templates。
-
-主要新增接口：
-
+浠撳簱鐜板凡鍖呭惈鑵捐 EKS Container Instances 鐢熶骇璇曡繍琛屾墍闇€鐨勪唬鐮佽矾寰勶細浠诲姟鍙栨秷銆佹寔缁?Agent 蹇冭烦銆佹€绘墽琛屾椂闄愩€丏NS 绉佺綉鍦板潃鎷掔粷銆乀oken/鎴愬憳绠＄悊銆侀」鐩骇淇濈暀绛栫暐銆佸璁′笌杩愮淮鏌ヨ銆佺粓鎬佸疄渚嬫竻鐞嗐€乻taging/pilot 閰嶇疆妯℃澘銆佽吘璁?Terraform 鍜屽彈淇濇姢鐨?GitHub Actions銆?
+瀹夊叏杈圭晫锛氶粯璁?`wrangler.toml` 濮嬬粓涓烘湰鍦?`mock_inline`锛涜吘璁厤缃繀椤婚€氳繃 `config/wrangler.tencent.template.toml` 娓叉煋銆俿taging 榛樿涓?application dry-run锛宲ilot 鍙兘鍦ㄦ槑纭壒鍑嗙殑鐩爣銆佺綉缁溿€侀暅鍍忔憳瑕佸拰鎴愭湰涓婇檺涓嬪叧闂?dry-run銆傜湡瀹炲畬鏁村伐鍏烽摼鍥哄畾涓哄崟 Agent銆佹棤 Hunter銆佹棤鐢ㄦ埛妯℃澘锛屽苟浣跨敤闀滃儚鍐呭浐瀹?commit 鐨?Nuclei templates銆?
+涓昏鏂板鎺ュ彛锛?
 ```text
 POST /api/tasks/:id/cancel
 GET|POST /api/admin/users
@@ -54,18 +42,14 @@ npm run d1:apply:local
 npm run dev
 ```
 
-默认开发 token：`dev-token`。这是仅用于本地开发的兼容路径：Worker 会把该 token 映射为 `admin` actor，并只授权访问 `DEFAULT_PROJECT_ID`（默认 `project-default`）。不要在生产环境复用该值；生产部署应通过 Wrangler secret 设置强随机 token 或后续接入正式身份提供方。
-
-默认种子项目 `project-default` 的 `projects.scope_json` 为 `["example.com"]`。创建任务时，`targets` 必须落在该项目 allowlist 内；Worker 仍会拒绝 private/internal/metadata host、raw IP 和 malformed host。
-
-Node.js v22.22.3/npm 10.9.8 环境下已验证 Wrangler local D1 migration、Worker mock-mode smoke、artifact download、admin diagnostics、无 token 拒绝、scope 外目标拒绝。`GET /api/tasks/:id/agent-runs` 不返回 agent `callback_token`；该 token 仅用于 agent callback 能力认证，不应暴露给前端查询接口。
-
+榛樿寮€鍙?token锛歚dev-token`銆傝繖鏄粎鐢ㄤ簬鏈湴寮€鍙戠殑鍏煎璺緞锛歐orker 浼氭妸璇?token 鏄犲皠涓?`admin` actor锛屽苟鍙巿鏉冭闂?`DEFAULT_PROJECT_ID`锛堥粯璁?`project-default`锛夈€備笉瑕佸湪鐢熶骇鐜澶嶇敤璇ュ€硷紱鐢熶骇閮ㄧ讲搴旈€氳繃 Wrangler secret 璁剧疆寮洪殢鏈?token 鎴栧悗缁帴鍏ユ寮忚韩浠芥彁渚涙柟銆?
+榛樿绉嶅瓙椤圭洰 `project-default` 鐨?`projects.scope_json` 涓?`["example.com"]`銆傚垱寤轰换鍔℃椂锛宍targets` 蹇呴』钀藉湪璇ラ」鐩?allowlist 鍐咃紱Worker 浠嶄細鎷掔粷 private/internal/metadata host銆乺aw IP 鍜?malformed host銆?
+Node.js v22.22.3/npm 10.9.8 鐜涓嬪凡楠岃瘉 Wrangler local D1 migration銆乄orker mock-mode smoke銆乤rtifact download銆乤dmin diagnostics銆佹棤 token 鎷掔粷銆乻cope 澶栫洰鏍囨嫆缁濄€俙GET /api/tasks/:id/agent-runs` 涓嶈繑鍥?agent `callback_token`锛涜 token 浠呯敤浜?agent callback 鑳藉姏璁よ瘉锛屼笉搴旀毚闇茬粰鍓嶇鏌ヨ鎺ュ彛銆?
 ## Historical Cloudflare staging smoke status (2026-06-16; not the isolated P1 staging environment)
 
-The following section records an older mock smoke using migrations through `0006`. It is not evidence that the current `0007`–`0010`, isolated Tencent staging/pilot infrastructure, or live EKS CI acceptance has been deployed.
+The following section records an older mock smoke using migrations through `0006`. It is not evidence that the current `0007`鈥揱0010`, isolated Tencent staging/pilot infrastructure, or live EKS CI acceptance has been deployed.
 
-2026-06-16 已在 Cloudflare account `ee7bb93469d8ee4f1c81c90854d7de47` 创建并验证 staging 资源：
-
+2026-06-16 宸插湪 Cloudflare account `ee7bb93469d8ee4f1c81c90854d7de47` 鍒涘缓骞堕獙璇?staging 璧勬簮锛?
 - Worker: `cloudflare-scan-mvp-api` at `https://cloudflare-scan-mvp-api.ffffffff.workers.dev`
 - D1: `scan_mvp_metadata` (`0c0f3923-d3d6-47eb-8e08-fade83ef08ba`), migrations `0001`-`0006` applied remotely
 - R2: `scan-artifacts-dev`
@@ -81,28 +65,25 @@ TOKEN="$(tr -d '\n' < .remote-admin-token)"
 curl -H "Authorization: Bearer $TOKEN" "$BASE/api/auth/me"
 ```
 
-本地 P0 纯逻辑校验（不需要 Cloudflare 凭据，不发起真实网络扫描）：
+鏈湴 P0 绾€昏緫鏍￠獙锛堜笉闇€瑕?Cloudflare 鍑嵁锛屼笉鍙戣捣鐪熷疄缃戠粶鎵弿锛夛細
 
 ```bash
 node scripts/verify-p0.mjs
 ```
 
-该脚本目前校验共享 contracts 中的状态、模块、外部来源和 agent 模式 allowlist/defaults；基线编译仍使用 `node node_modules/typescript/bin/tsc --noEmit --project tsconfig.json`。
-
-P1 migration 纯本地校验（不需要 Cloudflare 凭据，不依赖 Wrangler；会在临时 sqlite DB 上应用 migrations，并在存在 Miniflare D1 sqlite 时复制后验证升级路径，不会修改原 DB）：
+璇ヨ剼鏈洰鍓嶆牎楠屽叡浜?contracts 涓殑鐘舵€併€佹ā鍧椼€佸閮ㄦ潵婧愬拰 agent 妯″紡 allowlist/defaults锛涘熀绾跨紪璇戜粛浣跨敤 `node node_modules/typescript/bin/tsc --noEmit --project tsconfig.json`銆?
+P1 migration 绾湰鍦版牎楠岋紙涓嶉渶瑕?Cloudflare 鍑嵁锛屼笉渚濊禆 Wrangler锛涗細鍦ㄤ复鏃?sqlite DB 涓婂簲鐢?migrations锛屽苟鍦ㄥ瓨鍦?Miniflare D1 sqlite 鏃跺鍒跺悗楠岃瘉鍗囩骇璺緞锛屼笉浼氫慨鏀瑰師 DB锛夛細
 
 ```bash
 node scripts/verify-p1-migrations.mjs
 ```
 
-D1 migration 策略保持 additive-only：新增表/索引和 backfill 可以通过后续 migration 修正；D1 远程回滚不做 destructive 自动化。若远程应用失败，先停止部署，保留当前 migration 文件，使用 `wrangler d1 execute`/控制台检查已创建对象，再用新的 forward-fix migration 补齐或禁用新功能开关。远程环境仍应使用 Node.js >=22 的 Wrangler 执行：
-
+D1 migration 绛栫暐淇濇寔 additive-only锛氭柊澧炶〃/绱㈠紩鍜?backfill 鍙互閫氳繃鍚庣画 migration 淇锛汥1 杩滅▼鍥炴粴涓嶅仛 destructive 鑷姩鍖栥€傝嫢杩滅▼搴旂敤澶辫触锛屽厛鍋滄閮ㄧ讲锛屼繚鐣欏綋鍓?migration 鏂囦欢锛屼娇鐢?`wrangler d1 execute`/鎺у埗鍙版鏌ュ凡鍒涘缓瀵硅薄锛屽啀鐢ㄦ柊鐨?forward-fix migration 琛ラ綈鎴栫鐢ㄦ柊鍔熻兘寮€鍏炽€傝繙绋嬬幆澧冧粛搴斾娇鐢?Node.js >=22 鐨?Wrangler 鎵ц锛?
 ```bash
 npm run d1:apply:remote
 ```
 
-创建任务：
-
+鍒涘缓浠诲姟锛?
 ```bash
 curl -X POST http://localhost:8787/api/tasks \
   -H "Authorization: Bearer dev-token" \
@@ -175,44 +156,37 @@ curl -X POST http://localhost:8787/api/admin/maintenance/timeouts \
 
 `AGENT_HEARTBEAT_TIMEOUT_SECONDS` defaults to `600`. On launch failure or stale `starting/running` agent runs, the Worker either marks the current run/shard failed or timed out and requeues with `attempt + 1`, or records a deadletter/audit reason and marks the task failed/timeout after retries are exhausted. `TIMEOUT_MINUTES` is injected into the agent and used as the real-toolchain process timeout.
 
-`wrangler.toml` 默认 `AGENT_PROVIDER = "mock"` 且 `MOCK_AGENT_MODE = "inline"`，本地创建任务后会自动生成 mock asset/finding/artifact 并完成任务。
-
+`wrangler.toml` 榛樿 `AGENT_PROVIDER = "mock"` 涓?`MOCK_AGENT_MODE = "inline"`锛屾湰鍦板垱寤轰换鍔″悗浼氳嚜鍔ㄧ敓鎴?mock asset/finding/artifact 骞跺畬鎴愪换鍔°€?
 ## Minimal web UI
 
-打开 `web/index.html`，保持 API Base URL 为 `http://localhost:8787`、Admin Token 为 `dev-token`，即可创建任务、查看 task/shard/agent run、assets、findings 和 artifact 下载。
-
+鎵撳紑 `web/index.html`锛屼繚鎸?API Base URL 涓?`http://localhost:8787`銆丄dmin Token 涓?`dev-token`锛屽嵆鍙垱寤轰换鍔°€佹煡鐪?task/shard/agent run銆乤ssets銆乫indings 鍜?artifact 涓嬭浇銆?
 ## Manual local agent mode
 
-`manual` provider 仅保留为底层开发开关。出于能力 Token 安全要求，`GET /api/tasks/:id/agent-runs` 不返回 `callback_token`，因此普通管理 API 不支持人工领取 Token。请使用默认 inline mock 验证本地闭环，或使用 Cloud Run、Aliyun ECI、Tencent EKS CI 将 Token 直接注入受控容器。不要通过新增查询接口、日志或管理页面暴露 Agent callback Token。
-
+`manual` provider 浠呬繚鐣欎负搴曞眰寮€鍙戝紑鍏炽€傚嚭浜庤兘鍔?Token 瀹夊叏瑕佹眰锛宍GET /api/tasks/:id/agent-runs` 涓嶈繑鍥?`callback_token`锛屽洜姝ゆ櫘閫氱鐞?API 涓嶆敮鎸佷汉宸ラ鍙?Token銆傝浣跨敤榛樿 inline mock 楠岃瘉鏈湴闂幆锛屾垨浣跨敤 Cloud Run銆丄liyun ECI銆乀encent EKS CI 灏?Token 鐩存帴娉ㄥ叆鍙楁帶瀹瑰櫒銆備笉瑕侀€氳繃鏂板鏌ヨ鎺ュ彛銆佹棩蹇楁垨绠＄悊椤甸潰鏆撮湶 Agent callback Token銆?
 ## Provider auto routing and cost model
 
-`AGENT_PROVIDER=auto` 会根据简单成本模型和目标区域启发式自动选择 external provider。目前候选 provider：
-
+`AGENT_PROVIDER=auto` 浼氭牴鎹畝鍗曟垚鏈ā鍨嬪拰鐩爣鍖哄煙鍚彂寮忚嚜鍔ㄩ€夋嫨 external provider銆傜洰鍓嶅€欓€?provider锛?
 ```text
 gcp_cloud_run
 aliyun_eci
 ```
 
-默认策略：
-
+榛樿绛栫暐锛?
 ```text
 AGENT_AUTO_ROUTING_POLICY=region
 ```
 
-行为：
+琛屼负锛?
+- `.cn` / `.涓浗` / `.鍏徃` / `.缃戠粶` 鐩爣锛氶€夋嫨 `AGENT_AUTO_CN_PROVIDER`锛岄粯璁?`aliyun_eci`
+- 鍏朵粬鐩爣锛氶€夋嫨 `AGENT_AUTO_DEFAULT_PROVIDER`锛岄粯璁?`gcp_cloud_run`
 
-- `.cn` / `.中国` / `.公司` / `.网络` 目标：选择 `AGENT_AUTO_CN_PROVIDER`，默认 `aliyun_eci`
-- 其他目标：选择 `AGENT_AUTO_DEFAULT_PROVIDER`，默认 `gcp_cloud_run`
-
-也可以切换为纯成本优先：
+涔熷彲浠ュ垏鎹负绾垚鏈紭鍏堬細
 
 ```text
 AGENT_AUTO_ROUTING_POLICY=lowest_cost
 ```
 
-成本估算使用以下变量：
-
+鎴愭湰浼扮畻浣跨敤浠ヤ笅鍙橀噺锛?
 ```text
 AGENT_ESTIMATED_DURATION_SECONDS=600
 AGENT_CPU=1
@@ -223,14 +197,12 @@ ALIYUN_ECI_VCPU_SECOND_PRICE=0.0000077
 ALIYUN_ECI_MEMORY_GIB_SECOND_PRICE=0.00000096
 ```
 
-估算公式：
-
+浼扮畻鍏紡锛?
 ```text
 estimated_cost_usd = duration_seconds * (cpu * vcpu_second_price + memory_gib * memory_gib_second_price)
 ```
 
-本地 dry-run 示例：
-
+鏈湴 dry-run 绀轰緥锛?
 ```bash
 npx wrangler dev --config wrangler.toml --port 8787 \
   --var AGENT_PROVIDER:auto \
@@ -247,25 +219,22 @@ npx wrangler dev --config wrangler.toml --port 8787 \
   --var ALIYUN_ECI_IMAGE:registry.cn-hangzhou.aliyuncs.com/your-namespace/scan-agent:v0.1.0
 ```
 
-创建 `example.cn` 任务会 dry-run 到 `aliyun_eci`；创建 `example.com` 任务会 dry-run 到 `gcp_cloud_run`。如果设置 `AGENT_AUTO_ROUTING_POLICY=lowest_cost`，在默认价格下会选择 `aliyun_eci`。
-
+鍒涘缓 `example.cn` 浠诲姟浼?dry-run 鍒?`aliyun_eci`锛涘垱寤?`example.com` 浠诲姟浼?dry-run 鍒?`gcp_cloud_run`銆傚鏋滆缃?`AGENT_AUTO_ROUTING_POLICY=lowest_cost`锛屽湪榛樿浠锋牸涓嬩細閫夋嫨 `aliyun_eci`銆?
 ### Auto fallback and max cost
 
-`auto` provider 支持 fallback skeleton：
-
+`auto` provider 鏀寔 fallback skeleton锛?
 ```text
 AGENT_AUTO_ENABLE_FALLBACK=true
 ```
 
-当首选 provider 启动失败时，Queue consumer 会按 auto routing 生成的候选顺序尝试下一个 provider，并把 fallback 原因写入 `agent_runs.error_message`。成功 fallback 后，`agent_runs.provider`、`provider_job_id`、`image`、`region` 会更新为最终成功启动的 provider。
-
-预算上限可以通过全局 env 或单个任务设置：
+褰撻閫?provider 鍚姩澶辫触鏃讹紝Queue consumer 浼氭寜 auto routing 鐢熸垚鐨勫€欓€夐『搴忓皾璇曚笅涓€涓?provider锛屽苟鎶?fallback 鍘熷洜鍐欏叆 `agent_runs.error_message`銆傛垚鍔?fallback 鍚庯紝`agent_runs.provider`銆乣provider_job_id`銆乣image`銆乣region` 浼氭洿鏂颁负鏈€缁堟垚鍔熷惎鍔ㄧ殑 provider銆?
+棰勭畻涓婇檺鍙互閫氳繃鍏ㄥ眬 env 鎴栧崟涓换鍔¤缃細
 
 ```text
 AGENT_MAX_COST_USD=0.01
 ```
 
-或者创建任务时传：
+鎴栬€呭垱寤轰换鍔℃椂浼狅細
 
 ```json
 {
@@ -274,10 +243,8 @@ AGENT_MAX_COST_USD=0.01
 }
 ```
 
-任务级 `max_cost_usd` 优先于全局 `AGENT_MAX_COST_USD`。如果所有候选 provider 的估算成本都超过预算，任务会在创建 shard/agent_run 后被标记为 `failed`，不会启动外部容器。
-
-Fallback 验证示例：故意不给 GCP 必需配置，让 `example.com` 首选 `gcp_cloud_run` 失败，再 fallback 到 Aliyun dry-run：
-
+浠诲姟绾?`max_cost_usd` 浼樺厛浜庡叏灞€ `AGENT_MAX_COST_USD`銆傚鏋滄墍鏈夊€欓€?provider 鐨勪及绠楁垚鏈兘瓒呰繃棰勭畻锛屼换鍔′細鍦ㄥ垱寤?shard/agent_run 鍚庤鏍囪涓?`failed`锛屼笉浼氬惎鍔ㄥ閮ㄥ鍣ㄣ€?
+Fallback 楠岃瘉绀轰緥锛氭晠鎰忎笉缁?GCP 蹇呴渶閰嶇疆锛岃 `example.com` 棣栭€?`gcp_cloud_run` 澶辫触锛屽啀 fallback 鍒?Aliyun dry-run锛?
 ```bash
 npx wrangler dev --config wrangler.toml --port 8787 \
   --var AGENT_PROVIDER:auto \
@@ -295,8 +262,7 @@ npx wrangler dev --config wrangler.toml --port 8787 \
   --var ALIYUN_ECI_IMAGE:registry.cn-hangzhou.aliyuncs.com/your-namespace/scan-agent:v0.1.0
 ```
 
-Budget 验证示例：设置极低预算，确认不会启动 provider：
-
+Budget 楠岃瘉绀轰緥锛氳缃瀬浣庨绠楋紝纭涓嶄細鍚姩 provider锛?
 ```bash
 npx wrangler dev --config wrangler.toml --port 8787 \
   --var AGENT_PROVIDER:auto \
@@ -306,10 +272,8 @@ npx wrangler dev --config wrangler.toml --port 8787 \
 
 ## Cloud Run Jobs provider
 
-完整真实 GCP 端到端命令见：`docs/cloud-run-e2e-runbook.md`。
-
-Cloud Run provider 会复用 `agent/real` 的环境变量合同。Worker 在 Queue consumer 中创建 shard、agent_run 和 task-bound callback token 后，调用 Cloud Run Jobs `:run` API，并把以下环境变量注入到 Job：
-
+瀹屾暣鐪熷疄 GCP 绔埌绔懡浠よ锛歚docs/cloud-run-e2e-runbook.md`銆?
+Cloud Run provider 浼氬鐢?`agent/real` 鐨勭幆澧冨彉閲忓悎鍚屻€俉orker 鍦?Queue consumer 涓垱寤?shard銆乤gent_run 鍜?task-bound callback token 鍚庯紝璋冪敤 Cloud Run Jobs `:run` API锛屽苟鎶婁互涓嬬幆澧冨彉閲忔敞鍏ュ埌 Job锛?
 ```text
 TASK_ID
 SHARD_ID
@@ -325,8 +289,7 @@ TIMEOUT_MINUTES
 SCAN_MODE
 ```
 
-本地或配置检查时建议先 dry-run，不会真的调用 Google API：
-
+鏈湴鎴栭厤缃鏌ユ椂寤鸿鍏?dry-run锛屼笉浼氱湡鐨勮皟鐢?Google API锛?
 ```bash
 npx wrangler dev --config wrangler.toml --port 8787 \
   --var AGENT_PROVIDER:gcp_cloud_run \
@@ -337,43 +300,33 @@ npx wrangler dev --config wrangler.toml --port 8787 \
   --var CLOUD_RUN_JOB_NAME:scan-agent-job
 ```
 
-真实调用时：
+鐪熷疄璋冪敤鏃讹細
 
-1. 构建并推送 `agent/real` 镜像。
-2. 创建 Cloud Run Job，镜像使用该 agent image。
-3. 设置 Worker vars/secrets：
-   - `AGENT_PROVIDER=gcp_cloud_run`
+1. 鏋勫缓骞舵帹閫?`agent/real` 闀滃儚銆?2. 鍒涘缓 Cloud Run Job锛岄暅鍍忎娇鐢ㄨ agent image銆?3. 璁剧疆 Worker vars/secrets锛?   - `AGENT_PROVIDER=gcp_cloud_run`
    - `CALLBACK_BASE_URL=https://<worker-domain>`
    - `GCP_PROJECT_ID`
    - `GCP_LOCATION`
    - `CLOUD_RUN_JOB_NAME`
-   - `CLOUD_RUN_CONTAINER_NAME`（可选）
-   - `AGENT_SCAN_MODE=mock`（默认安全模式；`http_probe`/`real_toolchain` 仅用于已授权目标）
-   - `CLOUD_RUN_DRY_RUN=false`
-4. 设置 Google auth。二选一：
-   - 临时/开发：`GCP_ACCESS_TOKEN` secret。
-   - 服务账号：`GCP_CLIENT_EMAIL` 和 `GCP_PRIVATE_KEY` secrets，Worker 会用 service account JWT 换取 Cloud Platform access token。
-
+   - `CLOUD_RUN_CONTAINER_NAME`锛堝彲閫夛級
+   - `AGENT_SCAN_MODE=mock`锛堥粯璁ゅ畨鍏ㄦā寮忥紱`http_probe`/`real_toolchain` 浠呯敤浜庡凡鎺堟潈鐩爣锛?   - `CLOUD_RUN_DRY_RUN=false`
+4. 璁剧疆 Google auth銆備簩閫変竴锛?   - 涓存椂/寮€鍙戯細`GCP_ACCESS_TOKEN` secret銆?   - 鏈嶅姟璐﹀彿锛歚GCP_CLIENT_EMAIL` 鍜?`GCP_PRIVATE_KEY` secrets锛學orker 浼氱敤 service account JWT 鎹㈠彇 Cloud Platform access token銆?
 ### Cloud Run setup helper scripts
 
-项目提供了 3 个 helper scripts。它们默认只使用 `agent/real` 镜像，不会启用 subfinder/httpx/nuclei 等真实扫描器。
-
-1. 构建并推送 agent image 到 Artifact Registry：
-
+椤圭洰鎻愪緵浜?3 涓?helper scripts銆傚畠浠粯璁ゅ彧浣跨敤 `agent/real` 闀滃儚锛屼笉浼氬惎鐢?subfinder/httpx/nuclei 绛夌湡瀹炴壂鎻忓櫒銆?
+1. 鏋勫缓骞舵帹閫?agent image 鍒?Artifact Registry锛?
 ```bash
 GCP_PROJECT_ID=my-project \
 GCP_LOCATION=asia-east1 \
 npm run cloud-run:build-agent
 ```
 
-脚本会输出 image URI，例如：
+鑴氭湰浼氳緭鍑?image URI锛屼緥濡傦細
 
 ```text
 asia-east1-docker.pkg.dev/my-project/scan-mvp/scan-agent:v0.1.0
 ```
 
-2. 创建或更新 Cloud Run Job：
-
+2. 鍒涘缓鎴栨洿鏂?Cloud Run Job锛?
 ```bash
 GCP_PROJECT_ID=my-project \
 GCP_LOCATION=asia-east1 \
@@ -382,8 +335,7 @@ IMAGE_URI=asia-east1-docker.pkg.dev/my-project/scan-mvp/scan-agent:v0.1.0 \
 npm run cloud-run:deploy-job
 ```
 
-3. 创建 Worker 用来启动 Cloud Run Job 的 service account，并给它绑定 job-level `roles/run.invoker`：
-
+3. 鍒涘缓 Worker 鐢ㄦ潵鍚姩 Cloud Run Job 鐨?service account锛屽苟缁欏畠缁戝畾 job-level `roles/run.invoker`锛?
 ```bash
 GCP_PROJECT_ID=my-project \
 GCP_LOCATION=asia-east1 \
@@ -392,23 +344,20 @@ KEY_FILE=/tmp/scan-mvp-worker-runner-key.json \
 npm run cloud-run:create-worker-sa
 ```
 
-然后从 key file 设置 Worker secrets。不要提交 key file：
-
+鐒跺悗浠?key file 璁剧疆 Worker secrets銆備笉瑕佹彁浜?key file锛?
 ```bash
 node -e 'const k=require(process.argv[1]); console.log(k.client_email)' /tmp/scan-mvp-worker-runner-key.json | npx wrangler secret put GCP_CLIENT_EMAIL
 node -e 'const k=require(process.argv[1]); console.log(k.private_key)' /tmp/scan-mvp-worker-runner-key.json | npx wrangler secret put GCP_PRIVATE_KEY
 ```
 
-如果使用临时 access token，也可以：
-
+濡傛灉浣跨敤涓存椂 access token锛屼篃鍙互锛?
 ```bash
 gcloud auth print-access-token | npx wrangler secret put GCP_ACCESS_TOKEN
 ```
 
 ### Cloud Run end-to-end verification
 
-部署 Worker 后，用真实公网 Worker URL 作为 callback：
-
+閮ㄧ讲 Worker 鍚庯紝鐢ㄧ湡瀹炲叕缃?Worker URL 浣滀负 callback锛?
 ```bash
 npx wrangler deploy --config wrangler.toml \
   --var AGENT_PROVIDER:gcp_cloud_run \
@@ -420,8 +369,7 @@ npx wrangler deploy --config wrangler.toml \
   --var AGENT_SCAN_MODE:mock
 ```
 
-创建任务：
-
+鍒涘缓浠诲姟锛?
 ```bash
 curl -X POST https://<worker-domain>/api/tasks \
   -H "Authorization: Bearer <DEV_ADMIN_TOKEN>" \
@@ -429,8 +377,7 @@ curl -X POST https://<worker-domain>/api/tasks \
   -d '{"name":"cloud-run example.com","targets":["example.com"],"modules":["subdomain","http_probe","nuclei"],"max_agents":1,"rate_limit":50,"timeout_minutes":30}'
 ```
 
-然后查看：
-
+鐒跺悗鏌ョ湅锛?
 ```bash
 curl -H "Authorization: Bearer <DEV_ADMIN_TOKEN>" https://<worker-domain>/api/tasks/{task_id}
 curl -H "Authorization: Bearer <DEV_ADMIN_TOKEN>" https://<worker-domain>/api/tasks/{task_id}/agent-runs
@@ -438,12 +385,10 @@ curl -H "Authorization: Bearer <DEV_ADMIN_TOKEN>" "https://<worker-domain>/api/a
 curl -H "Authorization: Bearer <DEV_ADMIN_TOKEN>" "https://<worker-domain>/api/artifacts?task_id={task_id}"
 ```
 
-Cloud Run Job 启动成功后，`agent_runs.provider_job_id` 会保存 Google operation name；task 会保持 `provisioning/starting`，直到 Cloud Run 中的 agent 回调 heartbeat 后进入 `running`，complete 后进入 `completed`。
-
+Cloud Run Job 鍚姩鎴愬姛鍚庯紝`agent_runs.provider_job_id` 浼氫繚瀛?Google operation name锛泃ask 浼氫繚鎸?`provisioning/starting`锛岀洿鍒?Cloud Run 涓殑 agent 鍥炶皟 heartbeat 鍚庤繘鍏?`running`锛宑omplete 鍚庤繘鍏?`completed`銆?
 ## Aliyun ECI provider
 
-Aliyun ECI provider 和 Cloud Run provider 使用同一套 agent contract。Worker 在 Queue consumer 中创建 shard、agent_run 和 task-bound callback token 后，调用阿里云 ECI `CreateContainerGroup`，并把以下环境变量注入到容器：
-
+Aliyun ECI provider 鍜?Cloud Run provider 浣跨敤鍚屼竴濂?agent contract銆俉orker 鍦?Queue consumer 涓垱寤?shard銆乤gent_run 鍜?task-bound callback token 鍚庯紝璋冪敤闃块噷浜?ECI `CreateContainerGroup`锛屽苟鎶婁互涓嬬幆澧冨彉閲忔敞鍏ュ埌瀹瑰櫒锛?
 ```text
 TASK_ID
 SHARD_ID
@@ -459,8 +404,7 @@ TIMEOUT_MINUTES
 SCAN_MODE
 ```
 
-本地或配置检查时建议先 dry-run，不会真的调用阿里云 API：
-
+鏈湴鎴栭厤缃鏌ユ椂寤鸿鍏?dry-run锛屼笉浼氱湡鐨勮皟鐢ㄩ樋閲屼簯 API锛?
 ```bash
 npx wrangler dev --config wrangler.toml --port 8787 \
   --var AGENT_PROVIDER:aliyun_eci \
@@ -472,12 +416,10 @@ npx wrangler dev --config wrangler.toml --port 8787 \
   --var ALIYUN_ECI_IMAGE:registry.cn-hangzhou.aliyuncs.com/your-namespace/scan-agent:v0.1.0
 ```
 
-真实调用时需要设置 vars/secrets：
-
+鐪熷疄璋冪敤鏃堕渶瑕佽缃?vars/secrets锛?
 - `AGENT_PROVIDER=aliyun_eci`
 - `CALLBACK_BASE_URL=https://<worker-domain>`
-- `AGENT_SCAN_MODE=mock`（默认安全模式；`http_probe`/`real_toolchain` 仅用于已授权目标）
-- `ALIYUN_REGION_ID`
+- `AGENT_SCAN_MODE=mock`锛堥粯璁ゅ畨鍏ㄦā寮忥紱`http_probe`/`real_toolchain` 浠呯敤浜庡凡鎺堟潈鐩爣锛?- `ALIYUN_REGION_ID`
 - `ALIYUN_SECURITY_GROUP_ID`
 - `ALIYUN_VSWITCH_ID`
 - `ALIYUN_ECI_IMAGE`
@@ -488,23 +430,18 @@ npx wrangler dev --config wrangler.toml --port 8787 \
 - `ALIYUN_ACCESS_KEY_ID` secret
 - `ALIYUN_ACCESS_KEY_SECRET` secret
 
-示例 secrets：
-
+绀轰緥 secrets锛?
 ```bash
 npx wrangler secret put ALIYUN_ACCESS_KEY_ID
 npx wrangler secret put ALIYUN_ACCESS_KEY_SECRET
 ```
 
-ECI ContainerGroup 创建成功后，`agent_runs.provider_job_id` 会保存 `ContainerGroupId`；task 会保持 `provisioning/starting`，直到 ECI 中的 agent 回调 heartbeat 后进入 `running`，complete 后进入 `completed`。
-
+ECI ContainerGroup 鍒涘缓鎴愬姛鍚庯紝`agent_runs.provider_job_id` 浼氫繚瀛?`ContainerGroupId`锛泃ask 浼氫繚鎸?`provisioning/starting`锛岀洿鍒?ECI 涓殑 agent 鍥炶皟 heartbeat 鍚庤繘鍏?`running`锛宑omplete 鍚庤繘鍏?`completed`銆?
 ## Tencent EKS Container Instances provider
 
-完整配置、验证和回滚步骤见：`docs/tencent-eks-ci-e2e-runbook.md`。
-
-`tencent_eks_ci` 通过腾讯云 TKE OpenAPI 的 `CreateEKSContainerInstances` 创建一个短生命周期容器实例，不需要创建或暴露标准 TKE Kubernetes API Server。该 provider 第一阶段仅支持显式选择，不参与 `auto` 路由或 provider fallback。
-
-应用层 dry-run 默认开启，不调用腾讯云 API：
-
+瀹屾暣閰嶇疆銆侀獙璇佸拰鍥炴粴姝ラ瑙侊細`docs/tencent-eks-ci-e2e-runbook.md`銆?
+`tencent_eks_ci` 閫氳繃鑵捐浜?TKE OpenAPI 鐨?`CreateEKSContainerInstances` 鍒涘缓涓€涓煭鐢熷懡鍛ㄦ湡瀹瑰櫒瀹炰緥锛屼笉闇€瑕佸垱寤烘垨鏆撮湶鏍囧噯 TKE Kubernetes API Server銆傝 provider 绗竴闃舵浠呮敮鎸佹樉寮忛€夋嫨锛屼笉鍙備笌 `auto` 璺敱鎴?provider fallback銆?
+搴旂敤灞?dry-run 榛樿寮€鍚紝涓嶈皟鐢ㄨ吘璁簯 API锛?
 ```text
 AGENT_PROVIDER=tencent_eks_ci
 TENCENT_EKS_CI_DRY_RUN=true
@@ -521,20 +458,16 @@ TENCENT_EKS_CI_EIP_BANDWIDTH_MBPS=5
 TENCENT_EKS_CI_EIP_ISP=BGP
 ```
 
-敏感配置只能使用 Wrangler secrets：
-
+鏁忔劅閰嶇疆鍙兘浣跨敤 Wrangler secrets锛?
 ```bash
 npx wrangler secret put TENCENT_SECRET_ID
 npx wrangler secret put TENCENT_SECRET_KEY
 ```
 
-生产试运行使用成都地域的公开阿里云 ACR 镜像，因此不会向腾讯请求附加 `ImageRegistryCredentials`。ACR 推送凭据只保存在受保护的 GitHub `agent-image-publish` Environment 中，不进入 Worker、Terraform state 或 EKS 请求。请求固定使用一个副本、`RestartPolicy=Never` 和 digest-pinned image，并复用现有 agent callback contract。
-
-首次发布前，在 GitHub `agent-image-publish` Environment 中配置 `ALIYUN_ACR_USERNAME` 和 `ALIYUN_ACR_PASSWORD` 两个 secrets，并确认 `70v2ray/scan-agent-cloud` 仓库类型为公开。`build-agent.yml` 推送并签名镜像后会退出 ACR 登录，再匿名读取该 digest；匿名检查失败时不会输出或晋级镜像。
-
-腾讯云未在该 Create API 中记录通用 `DryRun` 参数，因此 `TENCENT_EKS_CI_DRY_RUN=true` 是 Worker 侧安全开关。关闭它会创建可计费资源，必须单独批准。真实启动成功后，`agent_runs.provider_job_id` 保存 `EksCiId`，`provider_eip_id` 保存腾讯自动创建的 EIP ID（Describe 已返回时），`provider_egress_ip` 保存腾讯 Describe 或 Cloudflare `CF-Connecting-IP` 观测到的实际公网出口。定时收敛和删除前会读取实例容器状态及 `DescribeEKSContainerInstanceEvent`，把经过截断和脱敏的状态、原因、消息、退出码及最近事件保存到 `agent_runs.provider_*` 诊断字段；事件查询失败不会阻断资源清理。若取消竞态发生在 TKE 返回 EIP 字段之前，清理会先通过 VPC `DescribeAddresses` 按 EKS 实例 ID 精确发现仍绑定的自动 EIP，再执行删除；只有在取得 EIP ID 或出口 IP 后才会继续释放地址。terminal run 会拒绝迟到 callback，并调用 `DeleteEKSContainerInstances` 且设置 `ReleaseAutoCreatedEip=true`；完成、失败、取消、超时和迟到 Create 的清理若尚未收敛，会通过 `provider.cleanup` Queue 每 90 秒重试，最多执行 6 次早期检查，之后保留每 10 分钟 Cron 作为最终兜底。Delete 返回后会在默认 15 秒稳定窗口内执行 4 次精确 Describe，只有最后至少连续 2 次确认实例不存在才继续清理 EIP；单次暂时不可见不会标记完成，已接受删除后的传播等待也不会消耗 5 次真实清理失败额度。每 10 分钟的清理任务还会扫描云端 `scan-*` 实例，把仍存在但 D1 已错误标记完成的终态运行重新打开进入重试。实例稳定消失后再通过 VPC `DescribeAddresses` 精确核对本次 EIP，并对仍处于未绑定状态的地址调用 `ReleaseAddresses`，只有地址确认不存在后才标记 cleanup 完成。ACR 构建显式固定为 `linux/amd64`。
-
-建议 CAM 最小权限：
+鐢熶骇璇曡繍琛屼娇鐢ㄦ垚閮藉湴鍩熺殑鍏紑闃块噷浜?ACR 闀滃儚锛屽洜姝や笉浼氬悜鑵捐璇锋眰闄勫姞 `ImageRegistryCredentials`銆侫CR 鎺ㄩ€佸嚟鎹彧淇濆瓨鍦ㄥ彈淇濇姢鐨?GitHub `agent-image-publish` Environment 涓紝涓嶈繘鍏?Worker銆乀erraform state 鎴?EKS 璇锋眰銆傝姹傚浐瀹氫娇鐢ㄤ竴涓壇鏈€乣RestartPolicy=Never` 鍜?digest-pinned image锛屽苟澶嶇敤鐜版湁 agent callback contract銆?
+棣栨鍙戝竷鍓嶏紝鍦?GitHub `agent-image-publish` Environment 涓厤缃?`ALIYUN_ACR_USERNAME` 鍜?`ALIYUN_ACR_PASSWORD` 涓や釜 secrets锛屽苟纭 `70v2ray/scan-agent-cloud` 浠撳簱绫诲瀷涓哄叕寮€銆俙build-agent.yml` 鎺ㄩ€佸苟绛惧悕闀滃儚鍚庝細閫€鍑?ACR 鐧诲綍锛屽啀鍖垮悕璇诲彇璇?digest锛涘尶鍚嶆鏌ュけ璐ユ椂涓嶄細杈撳嚭鎴栨檵绾ч暅鍍忋€?
+鑵捐浜戞湭鍦ㄨ Create API 涓褰曢€氱敤 `DryRun` 鍙傛暟锛屽洜姝?`TENCENT_EKS_CI_DRY_RUN=true` 鏄?Worker 渚у畨鍏ㄥ紑鍏炽€傚叧闂畠浼氬垱寤哄彲璁¤垂璧勬簮锛屽繀椤诲崟鐙壒鍑嗐€傜湡瀹炲惎鍔ㄦ垚鍔熷悗锛宍agent_runs.provider_job_id` 淇濆瓨 `EksCiId`锛宍provider_eip_id` 淇濆瓨鑵捐鑷姩鍒涘缓鐨?EIP ID锛圖escribe 宸茶繑鍥炴椂锛夛紝`provider_egress_ip` 淇濆瓨鑵捐 Describe 鎴?Cloudflare `CF-Connecting-IP` 瑙傛祴鍒扮殑瀹為檯鍏綉鍑哄彛銆傚畾鏃舵敹鏁涘拰鍒犻櫎鍓嶄細璇诲彇瀹炰緥瀹瑰櫒鐘舵€佸強 `DescribeEKSContainerInstanceEvent`锛屾妸缁忚繃鎴柇鍜岃劚鏁忕殑鐘舵€併€佸師鍥犮€佹秷鎭€侀€€鍑虹爜鍙婃渶杩戜簨浠朵繚瀛樺埌 `agent_runs.provider_*` 璇婃柇瀛楁锛涗簨浠舵煡璇㈠け璐ヤ笉浼氶樆鏂祫婧愭竻鐞嗐€傝嫢鍙栨秷绔炴€佸彂鐢熷湪 TKE 杩斿洖 EIP 瀛楁涔嬪墠锛屾竻鐞嗕細鍏堥€氳繃 VPC `DescribeAddresses` 鎸?EKS 瀹炰緥 ID 绮剧‘鍙戠幇浠嶇粦瀹氱殑鑷姩 EIP锛屽啀鎵ц鍒犻櫎锛涘彧鏈夊湪鍙栧緱 EIP ID 鎴栧嚭鍙?IP 鍚庢墠浼氱户缁樉寮忛噴鏀惧湴鍧€銆傜粡杩囨湁鐣屽彂鐜伴噸璇曚粛鏃犳硶鍙栧緱韬唤鏃讹紝鏈€鍚庝竴娆℃竻鐞嗕粛璋冪敤甯?`ReleaseAutoCreatedEip=true` 鐨?Delete锛岀敱鑵捐绾ц仈閲婃斁鑷姩 EIP锛岄伩鍏嶆畫鐣欏疄渚嬫寔缁璐广€倀erminal run 浼氭嫆缁濊繜鍒?callback锛屽苟璋冪敤 `DeleteEKSContainerInstances` 涓旇缃?`ReleaseAutoCreatedEip=true`锛涘畬鎴愩€佸け璐ャ€佸彇娑堛€佽秴鏃跺拰杩熷埌 Create 鐨勬竻鐞嗚嫢灏氭湭鏀舵暃锛屼細閫氳繃 `provider.cleanup` Queue 姣?90 绉掗噸璇曪紝鏈€澶氭墽琛?6 娆℃棭鏈熸鏌ワ紝涔嬪悗淇濈暀姣?10 鍒嗛挓 Cron 浣滀负鏈€缁堝厹搴曘€侱elete 杩斿洖鍚庝細鍦ㄩ粯璁?15 绉掔ǔ瀹氱獥鍙ｅ唴鎵ц 4 娆＄簿纭?Describe锛屽彧鏈夋渶鍚庤嚦灏戣繛缁?2 娆＄‘璁ゅ疄渚嬩笉瀛樺湪鎵嶇户缁竻鐞?EIP锛涘崟娆℃殏鏃朵笉鍙涓嶄細鏍囪瀹屾垚锛屽凡鎺ュ彈鍒犻櫎鍚庣殑浼犳挱绛夊緟涔熶笉浼氭秷鑰?5 娆＄湡瀹炴竻鐞嗗け璐ラ搴︺€傛瘡 10 鍒嗛挓鐨勬竻鐞嗕换鍔¤繕浼氭壂鎻忎簯绔?`scan-*` 瀹炰緥锛屾妸浠嶅瓨鍦ㄤ絾 D1 宸查敊璇爣璁板畬鎴愮殑缁堟€佽繍琛岄噸鏂版墦寮€杩涘叆閲嶈瘯銆傚疄渚嬬ǔ瀹氭秷澶卞悗鍐嶉€氳繃 VPC `DescribeAddresses` 绮剧‘鏍稿鏈 EIP锛屽苟瀵逛粛澶勪簬鏈粦瀹氱姸鎬佺殑鍦板潃璋冪敤 `ReleaseAddresses`锛屽彧鏈夊湴鍧€纭涓嶅瓨鍦ㄥ悗鎵嶆爣璁?cleanup 瀹屾垚銆侫CR 鏋勫缓鏄惧紡鍥哄畾涓?`linux/amd64`銆?
+寤鸿 CAM 鏈€灏忔潈闄愶細
 
 ```text
 tke:CreateEKSContainerInstances
@@ -545,12 +478,10 @@ cvm:DescribeAddresses
 cvm:ReleaseAddresses
 ```
 
-网络使用无入站规则的隔离子网；每次 Create 自动分配一个独立 EIP，且固定 `Replicas=1`，因此并发容器不共享出口 IP。地址只能在创建/回调后得知，已释放地址未来仍可能被腾讯地址池复用。首次 live smoke 只允许一个 `mock` 容器；`http_probe` 和 `real_toolchain` 仍需独立目标授权。
-
+缃戠粶浣跨敤鏃犲叆绔欒鍒欑殑闅旂瀛愮綉锛涙瘡娆?Create 鑷姩鍒嗛厤涓€涓嫭绔?EIP锛屼笖鍥哄畾 `Replicas=1`锛屽洜姝ゅ苟鍙戝鍣ㄤ笉鍏变韩鍑哄彛 IP銆傚湴鍧€鍙兘鍦ㄥ垱寤?鍥炶皟鍚庡緱鐭ワ紝宸查噴鏀惧湴鍧€鏈潵浠嶅彲鑳借鑵捐鍦板潃姹犲鐢ㄣ€傞娆?live smoke 鍙厑璁镐竴涓?`mock` 瀹瑰櫒锛沗http_probe` 鍜?`real_toolchain` 浠嶉渶鐙珛鐩爣鎺堟潈銆?
 ## P1 local hardening
 
-本地可验证的 P1 能力已补齐，仍不需要真实 Cloudflare/GCP/Aliyun 凭据：
-
+鏈湴鍙獙璇佺殑 P1 鑳藉姏宸茶ˉ榻愶紝浠嶄笉闇€瑕佺湡瀹?Cloudflare/GCP/Aliyun 鍑嵁锛?
 ```bash
 node scripts/verify-p1-migrations.mjs
 node scripts/verify-p1-auth.mjs
@@ -561,28 +492,23 @@ node scripts/verify-toolchain.mjs
 
 ### Auth / RBAC / token lifecycle
 
-`DEV_ADMIN_TOKEN` 仍保留为本地兼容路径；生产路径应使用 `api_tokens.token_hash` 中的 SHA-256 token hash、`project_memberships` 中的项目角色，以及 `users.role` 的全局角色。当前权限边界：
+`DEV_ADMIN_TOKEN` 浠嶄繚鐣欎负鏈湴鍏煎璺緞锛涚敓浜ц矾寰勫簲浣跨敤 `api_tokens.token_hash` 涓殑 SHA-256 token hash銆乣project_memberships` 涓殑椤圭洰瑙掕壊锛屼互鍙?`users.role` 鐨勫叏灞€瑙掕壊銆傚綋鍓嶆潈闄愯竟鐣岋細
 
-- global admin：`POST /api/admin/maintenance/timeouts`、`GET /api/admin/search/status`、`POST /api/admin/providers/preflight`
-- project write：`POST /api/tasks`
-- project read：task/assets/findings/artifacts/search 读取接口、`GET /api/projects`、`GET /api/auth/me`
+- global admin锛歚POST /api/admin/maintenance/timeouts`銆乣GET /api/admin/search/status`銆乣POST /api/admin/providers/preflight`
+- project write锛歚POST /api/tasks`
+- project read锛歵ask/assets/findings/artifacts/search 璇诲彇鎺ュ彛銆乣GET /api/projects`銆乣GET /api/auth/me`
 
-Token 支持 `expires_at`、`revoked_at`、`last_used_at` 和 `scopes_json`。本地 verifier 覆盖 dev-token、global admin、project operator、reader、expired/revoked/unknown token 和 cross-project denial。
-
+Token 鏀寔 `expires_at`銆乣revoked_at`銆乣last_used_at` 鍜?`scopes_json`銆傛湰鍦?verifier 瑕嗙洊 dev-token銆乬lobal admin銆乸roject operator銆乺eader銆乪xpired/revoked/unknown token 鍜?cross-project denial銆?
 ### AI Search diagnostics
 
-`GET /api/admin/search/status` 返回非敏感诊断：enabled/binding 状态、limit 有效性、info/stats 调用结果、search doc 数量、最新文档年龄和 config validation。可传入 `task_id` 查看指定任务处于 `no_documents`、`within_indexing_grace` 或 `indexing_grace_elapsed`。`/api/search` 保持原有 degraded response 兼容，同时增加索引状态、空结果原因以及近期 R2 fallback 统计。`AI_SEARCH_INDEXING_GRACE_SECONDS` 默认 900 秒，仅用于诊断分类，不会延迟 API 响应。
-
-`GET /api/admin/operations/summary` 保留原有字段，并增加最近 24 小时任务/Agent/Provider 分布、心跳过期、任务总时限超期、腾讯实例清理待处理/失败/重试耗尽、搜索文档和最近异常列表。`health` 为 `ok`、`warning` 或 `critical`，`alerts` 给出可用于外部告警的稳定 code 和数量。
-
+`GET /api/admin/search/status` 杩斿洖闈炴晱鎰熻瘖鏂細enabled/binding 鐘舵€併€乴imit 鏈夋晥鎬с€乮nfo/stats 璋冪敤缁撴灉銆乻earch doc 鏁伴噺銆佹渶鏂版枃妗ｅ勾榫勫拰 config validation銆傚彲浼犲叆 `task_id` 鏌ョ湅鎸囧畾浠诲姟澶勪簬 `no_documents`銆乣within_indexing_grace` 鎴?`indexing_grace_elapsed`銆俙/api/search` 淇濇寔鍘熸湁 degraded response 鍏煎锛屽悓鏃跺鍔犵储寮曠姸鎬併€佺┖缁撴灉鍘熷洜浠ュ強杩戞湡 R2 fallback 缁熻銆俙AI_SEARCH_INDEXING_GRACE_SECONDS` 榛樿 900 绉掞紝浠呯敤浜庤瘖鏂垎绫伙紝涓嶄細寤惰繜 API 鍝嶅簲銆?
+`GET /api/admin/operations/summary` 淇濈暀鍘熸湁瀛楁锛屽苟澧炲姞鏈€杩?24 灏忔椂浠诲姟/Agent/Provider 鍒嗗竷銆佸績璺宠繃鏈熴€佷换鍔℃€绘椂闄愯秴鏈熴€佽吘璁疄渚嬫竻鐞嗗緟澶勭悊/澶辫触/閲嶈瘯鑰楀敖銆佹悳绱㈡枃妗ｅ拰鏈€杩戝紓甯稿垪琛ㄣ€俙health` 涓?`ok`銆乣warning` 鎴?`critical`锛宍alerts` 缁欏嚭鍙敤浜庡閮ㄥ憡璀︾殑绋冲畾 code 鍜屾暟閲忋€?
 ### Provider preflight and retry classification
 
-`POST /api/admin/providers/preflight` 默认只做配置/路由/dry-run payload 预检，不调用 GCP/Aliyun/Tencent。Cloud Run/Aliyun/Tencent provider 错误被分类为 `config_missing`、`auth_failed`、`validation`、`rate_limited`、`transient` 或 `unknown`，Queue launch failure 会按分类决定是否进入 bounded retry；缺配置/认证/校验错误不再无意义重试。
-
+`POST /api/admin/providers/preflight` 榛樿鍙仛閰嶇疆/璺敱/dry-run payload 棰勬锛屼笉璋冪敤 GCP/Aliyun/Tencent銆侰loud Run/Aliyun/Tencent provider 閿欒琚垎绫讳负 `config_missing`銆乣auth_failed`銆乣validation`銆乣rate_limited`銆乣transient` 鎴?`unknown`锛孮ueue launch failure 浼氭寜鍒嗙被鍐冲畾鏄惁杩涘叆 bounded retry锛涚己閰嶇疆/璁よ瘉/鏍￠獙閿欒涓嶅啀鏃犳剰涔夐噸璇曘€?
 ### Toolchain provenance
 
-`agent/real/toolchain.json` 固定 ProjectDiscovery 工具版本，Dockerfile 不再使用 `@latest` 安装：subfinder `v2.7.1`、httpx `v1.6.10`、nuclei `v3.3.8`。helper scripts 支持 digest URI、SBOM 和 cosign dry-run hooks：
-
+`agent/real/toolchain.json` 鍥哄畾 ProjectDiscovery 宸ュ叿鐗堟湰锛孌ockerfile 涓嶅啀浣跨敤 `@latest` 瀹夎锛歴ubfinder `v2.7.1`銆乭ttpx `v1.6.10`銆乶uclei `v3.3.8`銆俬elper scripts 鏀寔 digest URI銆丼BOM 鍜?cosign dry-run hooks锛?
 ```bash
 DRY_RUN=true GENERATE_SBOM=true SIGN_IMAGE=true VERIFY_SIGNATURE=true \
   GCP_PROJECT_ID=my-project GCP_LOCATION=asia-east1 ./scripts/cloud-run-build-agent.sh
@@ -593,24 +519,11 @@ DRY_RUN=true REQUIRE_IMAGE_DIGEST=true VERIFY_SIGNATURE=true \
   ./scripts/cloud-run-deploy-job.sh
 ```
 
-本地 SBOM/cosign 验证已完成：`syft v1.45.1` 和 `cosign v3.1.1` 已安装并校验 release checksum，`scan-agent:sbom-local` 已构建，本地镜像 SBOM 写入 `agent/real/supply-chain/image-sbom.spdx.json`，并用 cosign blob bundle `agent/real/supply-chain/image-sbom.sigstore.json` 验证通过。真实 registry image digest 的 `cosign sign`/`cosign verify` 仍需在推送镜像后执行；部署时建议强制 `REQUIRE_IMAGE_DIGEST=true`。
-
+鏈湴 SBOM/cosign 楠岃瘉宸插畬鎴愶細`syft v1.45.1` 鍜?`cosign v3.1.1` 宸插畨瑁呭苟鏍￠獙 release checksum锛宍scan-agent:sbom-local` 宸叉瀯寤猴紝鏈湴闀滃儚 SBOM 鍐欏叆 `agent/real/supply-chain/image-sbom.spdx.json`锛屽苟鐢?cosign blob bundle `agent/real/supply-chain/image-sbom.sigstore.json` 楠岃瘉閫氳繃銆傜湡瀹?registry image digest 鐨?`cosign sign`/`cosign verify` 浠嶉渶鍦ㄦ帹閫侀暅鍍忓悗鎵ц锛涢儴缃叉椂寤鸿寮哄埗 `REQUIRE_IMAGE_DIGEST=true`銆?
 ## P1 security checklist and known limitations
 
-安全默认值：
+瀹夊叏榛樿鍊硷細
 
-- 本地默认 `AGENT_PROVIDER=mock`、`MOCK_AGENT_MODE=inline`、`AGENT_SCAN_MODE=mock`、`HUNTER_ENABLED=false`、`AI_SEARCH_ENABLED=false`。
-- `dev-token` 仅限本地开发；生产必须使用 secret 或正式身份系统。
-- 任务 targets 必须落在项目 `scope_json` allowlist 中；raw IP、metadata/internal/private-style host 和 malformed host 会被拒绝。
-- Hunter 仅从已授权 root domain 派生 query，不接受用户原始 Hunter query。
-- real toolchain 候选合并会再次按 root targets 过滤，nuclei 默认排除 DoS/brute-force/fuzz/intrusive/destructive tags。
-- `/api/search` 不直接返回 AI Search chunks；每条结果必须映射回 D1 artifact/task 并通过项目过滤。
-- Queue retry 和 heartbeat timeout 都有上限；Cloud Run Job 自身默认 `--max-retries 0`，由 Worker 统一协调。
-
-已知限制 / P2 建议：
-
-- 已具备 DB-backed API token、创建/轮换/撤销和项目成员管理 API/页面；仍不包含 OIDC、密码登录或浏览器会话。
-- AI Search binding/API 在不同账号环境可能不同；仍需真实 Cloudflare 账号中的 live binding/index smoke test。
-- SBOM/cosign hooks 已可 dry-run 验证；真实 SBOM 生成、镜像签名和签名校验仍需 registry、`syft`、`cosign`/OIDC 环境。
-- D1 migrations 保持 additive-only；远程应用失败时使用 forward-fix migration，不做自动 destructive rollback。
-- P2 可增加多 Agent 分片、更细粒度的 per-module budgets、三云统一生产 SLA 和独立 indexing dashboard。
+- 鏈湴榛樿 `AGENT_PROVIDER=mock`銆乣MOCK_AGENT_MODE=inline`銆乣AGENT_SCAN_MODE=mock`銆乣HUNTER_ENABLED=false`銆乣AI_SEARCH_ENABLED=false`銆?- `dev-token` 浠呴檺鏈湴寮€鍙戯紱鐢熶骇蹇呴』浣跨敤 secret 鎴栨寮忚韩浠界郴缁熴€?- 浠诲姟 targets 蹇呴』钀藉湪椤圭洰 `scope_json` allowlist 涓紱raw IP銆乵etadata/internal/private-style host 鍜?malformed host 浼氳鎷掔粷銆?- Hunter 浠呬粠宸叉巿鏉?root domain 娲剧敓 query锛屼笉鎺ュ彈鐢ㄦ埛鍘熷 Hunter query銆?- real toolchain 鍊欓€夊悎骞朵細鍐嶆鎸?root targets 杩囨护锛宯uclei 榛樿鎺掗櫎 DoS/brute-force/fuzz/intrusive/destructive tags銆?- `/api/search` 涓嶇洿鎺ヨ繑鍥?AI Search chunks锛涙瘡鏉＄粨鏋滃繀椤绘槧灏勫洖 D1 artifact/task 骞堕€氳繃椤圭洰杩囨护銆?- Queue retry 鍜?heartbeat timeout 閮芥湁涓婇檺锛汣loud Run Job 鑷韩榛樿 `--max-retries 0`锛岀敱 Worker 缁熶竴鍗忚皟銆?
+宸茬煡闄愬埗 / P2 寤鸿锛?
+- 宸插叿澶?DB-backed API token銆佸垱寤?杞崲/鎾ら攢鍜岄」鐩垚鍛樼鐞?API/椤甸潰锛涗粛涓嶅寘鍚?OIDC銆佸瘑鐮佺櫥褰曟垨娴忚鍣ㄤ細璇濄€?- AI Search binding/API 鍦ㄤ笉鍚岃处鍙风幆澧冨彲鑳戒笉鍚岋紱浠嶉渶鐪熷疄 Cloudflare 璐﹀彿涓殑 live binding/index smoke test銆?- SBOM/cosign hooks 宸插彲 dry-run 楠岃瘉锛涚湡瀹?SBOM 鐢熸垚銆侀暅鍍忕鍚嶅拰绛惧悕鏍￠獙浠嶉渶 registry銆乣syft`銆乣cosign`/OIDC 鐜銆?- D1 migrations 淇濇寔 additive-only锛涜繙绋嬪簲鐢ㄥけ璐ユ椂浣跨敤 forward-fix migration锛屼笉鍋氳嚜鍔?destructive rollback銆?- P2 鍙鍔犲 Agent 鍒嗙墖銆佹洿缁嗙矑搴︾殑 per-module budgets銆佷笁浜戠粺涓€鐢熶骇 SLA 鍜岀嫭绔?indexing dashboard銆?
