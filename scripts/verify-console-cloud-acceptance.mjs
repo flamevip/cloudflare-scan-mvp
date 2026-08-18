@@ -44,6 +44,7 @@ assert.match(runner, /assert\.match\(toastText, \/task not found\/i/);
 assert.match(runner, /url\.origin === baseUrl\.origin && url\.pathname\.startsWith\('\/api\/'\)/);
 assert.match(runner, /deepRouteResponse\?\.status\(\), 200/);
 assert.match(runner, /deep_route_spa: true/);
+assert.equal((runner.match(/waitForURL\(\(url\) => url\.pathname === '\/forbidden'/g) ?? []).length, 3, 'all permission-denial checks must await the router redirect');
 assert.match(runner, /backend_status: result\.status, enforcement: environment === 'pilot' \? 'enforce' : 'report'/);
 assert.match(runner, /fixtureTaskId = `task_console_acceptance_\$\{required\('GITHUB_RUN_ID'\)/);
 assert.match(runner, /\/api\/artifacts\?task_id=\$\{encodeURIComponent\(fixtureTaskId\)\}/);
