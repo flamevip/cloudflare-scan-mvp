@@ -1,0 +1,106 @@
+name: console-cloud-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected console environment
+        required: true
+        type: choice
+        options: [staging, pilot]
+      approval_reference:
+        description: Written acceptance approval reference (PILOT-YYYYMMDD-NNN)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: console-cloud-acceptance-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ inputs.environment }}
+    env:
+      CONSOLE_ENVIRONMENT: ${{ inputs.environment }}
+      CONSOLE_BASE_URL: ${{ vars.CALLBACK_BASE_URL }}
+      CONSOLE_ADMIN_TOKEN: ${{ inputs.environment == 'staging' && secrets.STAGING_ADMIN_TOKEN || '' }}
+      CONSOLE_PROJECT_ID: project-default
+      APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+      ACCEPTANCE_REPORT_PATH: work/console-${{ inputs.environment }}-acceptance.json
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      TENCENT_EKS_CI_REGION: ${{ vars.TENCENT_EKS_CI_REGION }}
+      TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+      TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Generate masked per-run console tokens
+        id: tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+          generate_token() {
+            local name="$1"
+            local value
+            value="$(node -e "const {randomBytes}=require('node:crypto');process.stdout.write('scan_'+randomBytes(32).toString('base64url'))")"
+            echo "::add-mask::${value}"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          }
+          generate_token CONSOLE_READER_TOKEN
+          generate_token CONSOLE_OPERATOR_TOKEN
+          generate_token CONSOLE_PROJECT_ADMIN_TOKEN
+          generate_token CONSOLE_LIMITED_TOKEN
+          if [ "$CONSOLE_ENVIRONMENT" = pilot ]; then
+            value="$(node -e "const {randomBytes}=require('node:crypto');process.stdout.write('scan_'+randomBytes(32).toString('base64url'))")"
+            echo "::add-mask::${value}"
+            printf 'CONSOLE_ADMIN_TOKEN=%s\n' "$value" >> "$GITHUB_ENV"
+            printf 'PILOT_ADMIN_TOKEN=%s\n' "$value" >> "$GITHUB_ENV"
+          fi
+      - name: Validate acceptance authorization envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APPROVAL_REFERENCE" =~ ^PILOT-[0-9]{8}-[0-9]{3}$ ]]
+          test "$CONSOLE_ENVIRONMENT" = staging || test "$CONSOLE_ENVIRONMENT" = pilot
+          test -n "$CONSOLE_BASE_URL"
+          test -n "$CONSOLE_ADMIN_TOKEN"
+      - name: Create the short-lived hashed Pilot admin token
+        if: inputs.environment == 'pilot'
+        id: pilot_token
+        run: node scripts/manage-pilot-acceptance-token.mjs create
+      - name: Activate short-lived RBAC acceptance identities
+        id: identities
+        run: node scripts/manage-console-acceptance-identities.mjs create
+      - name: Run authenticated cloud console acceptance
+        id: console
+        run: node scripts/run-console-cloud-acceptance.mjs
+      - name: Verify Tencent EKS CI and EIP inventory is empty
+        if: always()
+        run: node scripts/inspect-tencent-resource-inventory.mjs
+      - name: Revoke RBAC acceptance identities
+        if: always() && steps.identities.outcome == 'success'
+        run: node scripts/manage-console-acceptance-identities.mjs revoke
+      - name: Revoke the short-lived Pilot admin token
+        if: always() && inputs.environment == 'pilot' && steps.pilot_token.outcome == 'success'
+        run: node scripts/manage-pilot-acceptance-token.mjs revoke
+      - name: Upload sanitized cloud console report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: console-${{ inputs.environment }}-acceptance-${{ github.run_id }}
+          path: work/console-${{ inputs.environment }}-acceptance.json
+          if-no-files-found: warn
+          retention-days: 30
