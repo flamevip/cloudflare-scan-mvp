@@ -282,14 +282,30 @@ async function acceptOperations(page) {
 
 async function acceptRequestIdError(page) {
   const missingId = `task_console_acceptance_missing_${process.env.GITHUB_RUN_ID ?? 'local'}`;
+  const failedResponses = [];
+  const recordFailure = (response) => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith(`/api/tasks/${missingId}`) && response.status() >= 400) {
+      failedResponses.push({ status: response.status(), requestId: response.headers()['x-request-id'] ?? null });
+    }
+  };
+  page.on('response', recordFailure);
   const responsePromise = page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/tasks/${missingId}`);
-  await goto(page, `/tasks/${missingId}`);
-  const response = await responsePromise;
-  assert.equal(response.status(), 404);
-  const requestId = response.headers()['x-request-id'];
-  assert.ok(requestId, 'error response did not include X-Request-ID');
-  await visible(page.locator('.toast').filter({ hasText: requestId }).first());
-  return { backend_status: 404, request_id_displayed: true, request_id: requestId };
+  try {
+    await goto(page, `/tasks/${missingId}`);
+    const response = await responsePromise;
+    assert.equal(response.status(), 404);
+    assert.ok(response.headers()['x-request-id'], 'error response did not include X-Request-ID');
+    const toast = page.locator('.toast').filter({ hasText: 'Request ID' }).first();
+    await visible(toast);
+    const toastText = await toast.innerText();
+    assert.match(toastText, /task not found/i, 'error toast did not display the backend message');
+    const displayed = failedResponses.find((failure) => failure.requestId && toastText.includes(failure.requestId));
+    assert.ok(displayed, 'error toast Request ID did not match a failed API response');
+    return { backend_status: displayed.status, request_id_displayed: true, request_id: displayed.requestId };
+  } finally {
+    page.off('response', recordFailure);
+  }
 }
 
 async function withPersona(name, token, acceptance) {

@@ -39,6 +39,8 @@ assert.match(runner, /retention\.request\.postDataJSON\(\)\?\.dry_run, true/);
 assert.match(runner, /sessionStorage\.getItem\('cloud-scan\.console\.token'\)/);
 assert.match(runner, /localStorage\.getItem\('cloud-scan\.console\.token'\)/);
 assert.match(runner, /request_id_displayed: true/);
+assert.match(runner, /failedResponses\.find\(\(failure\) => failure\.requestId && toastText\.includes\(failure\.requestId\)\)/);
+assert.match(runner, /assert\.match\(toastText, \/task not found\/i/);
 assert.match(runner, /backend_status: result\.status, enforcement: environment === 'pilot' \? 'enforce' : 'report'/);
 assert.match(runner, /fixtureTaskId = `task_console_acceptance_\$\{required\('GITHUB_RUN_ID'\)/);
 assert.match(runner, /\/api\/artifacts\?task_id=\$\{encodeURIComponent\(fixtureTaskId\)\}/);
