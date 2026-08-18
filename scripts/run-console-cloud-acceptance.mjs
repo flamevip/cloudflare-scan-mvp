@@ -108,7 +108,7 @@ async function acceptReader() {
     await visible(page.getByRole('heading', { name: '扫描任务' }));
     assert.equal(await page.getByRole('button', { name: /新建任务/ }).count(), 0, 'reader must not create tasks');
     await goto(page, `/projects/${encodeURIComponent(projects[0].id)}/members`);
-    assert.equal(new URL(page.url()).pathname, '/forbidden');
+    await page.waitForURL((url) => url.pathname === '/forbidden');
     await acceptSearch(page);
     return { role: 'reader', task_create_hidden: true, project_admin_denied: true, search_available: true, deep_route_spa: true };
   });
@@ -178,7 +178,7 @@ async function acceptProjectAdmin() {
     await visible(page.getByRole('heading', { name: /保留策略/ }));
     await visible(page.getByRole('button', { name: '保存保留策略' }));
     await goto(page, '/admin/users');
-    assert.equal(new URL(page.url()).pathname, '/forbidden');
+    await page.waitForURL((url) => url.pathname === '/forbidden');
     return { role: 'admin', members_page: true, settings_page: true, global_admin_denied: true };
   });
 }
@@ -188,7 +188,7 @@ async function acceptLimitedScope() {
     assert.deepEqual(me.token_scopes, ['tasks:read']);
     assert.equal(await page.getByRole('link', { name: 'AI Search' }).count(), 0);
     await goto(page, '/search');
-    assert.equal(new URL(page.url()).pathname, '/forbidden');
+    await page.waitForURL((url) => url.pathname === '/forbidden');
     const result = await apiRequest(context, tokens.limited, '/api/search?q=70yun.xyz&limit=1', [200, 403]);
     if (environment === 'pilot') {
       assert.equal(result.status, 403, 'pilot must enforce the missing search:read scope');
