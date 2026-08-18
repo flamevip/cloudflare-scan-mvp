@@ -102,14 +102,15 @@ async function acceptReader() {
     await visible(page.getByRole('link', { name: '项目' }));
     await visible(page.getByRole('link', { name: 'AI Search' }));
     assert.equal(await page.getByText('系统管理').count(), 0, 'reader must not see global administration');
-    await goto(page, '/tasks');
-    assert.equal(await page.getByRole('button', { name: /新建任务/ }).count(), 0, 'reader must not create tasks');
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    const deepRouteResponse = await page.goto(new URL('/tasks', baseUrl).href, { waitUntil: 'domcontentloaded' });
+    assert.equal(deepRouteResponse?.status(), 200, 'deep task route did not return the SPA document');
+    assert.match(deepRouteResponse?.headers()['content-type'] ?? '', /text\/html/i, 'deep task route did not return HTML');
     await visible(page.getByRole('heading', { name: '扫描任务' }));
+    assert.equal(await page.getByRole('button', { name: /新建任务/ }).count(), 0, 'reader must not create tasks');
     await goto(page, `/projects/${encodeURIComponent(projects[0].id)}/members`);
     assert.equal(new URL(page.url()).pathname, '/forbidden');
     await acceptSearch(page);
-    return { role: 'reader', task_create_hidden: true, project_admin_denied: true, search_available: true };
+    return { role: 'reader', task_create_hidden: true, project_admin_denied: true, search_available: true, deep_route_spa: true };
   });
 }
 
@@ -285,7 +286,7 @@ async function acceptRequestIdError(page) {
   const failedResponses = [];
   const recordFailure = (response) => {
     const url = new URL(response.url());
-    if (url.pathname.startsWith(`/api/tasks/${missingId}`) && response.status() >= 400) {
+    if (url.origin === baseUrl.origin && url.pathname.startsWith('/api/') && response.status() >= 400) {
       failedResponses.push({ status: response.status(), requestId: response.headers()['x-request-id'] ?? null });
     }
   };
