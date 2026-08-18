@@ -40,6 +40,9 @@ assert.match(runner, /sessionStorage\.getItem\('cloud-scan\.console\.token'\)/);
 assert.match(runner, /localStorage\.getItem\('cloud-scan\.console\.token'\)/);
 assert.match(runner, /request_id_displayed: true/);
 assert.match(runner, /backend_status: result\.status, enforcement: environment === 'pilot' \? 'enforce' : 'report'/);
+assert.match(runner, /fixtureTaskId = `task_console_acceptance_\$\{required\('GITHUB_RUN_ID'\)/);
+assert.match(runner, /\/api\/artifacts\?task_id=\$\{encodeURIComponent\(fixtureTaskId\)\}/);
+assert.doesNotMatch(runner, /tasks\.filter\(\(task\) => Number\(task\.artifact_count/, 'artifact acceptance must not depend on task-list aggregate fields');
 
 assert.match(identities, /createHash\('sha256'\)\.update\(rawToken\)/);
 assert.match(identities, /expiresAt = new Date\(Date\.now\(\) \+ 2 \* 60 \* 60_000\)/);
