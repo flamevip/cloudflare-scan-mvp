@@ -637,6 +637,7 @@ assert.match(JSON.stringify(tencentPreflight), /\[redacted\]/);
 assert.doesNotMatch(JSON.stringify(tencentPreflight), /short-callback-token|SECRETKEYEXAMPLE/);
 const providerPreflightSource = readFileSync(resolve(root, 'worker/src/services/provider-preflight.ts'), 'utf8');
 assert.match(providerPreflightSource, /total_count: result\.total_count/, 'read-only preflight must expose the Tencent instance count for acceptance cleanup checks');
+assert.match(providerPreflightSource, /eks_ci_id: instance\.EksCiId/, 'read-only preflight must expose sanitized Tencent instance identities for cleanup diagnostics');
 const lowCostPreflight = await providerPreflight.buildProviderPreflight({ ...baseEnv, AGENT_AUTO_ROUTING_POLICY: 'lowest_cost' }, { targets: ['example.com'], provider: 'auto' });
 assert.equal(lowCostPreflight.candidates[0], 'aliyun_eci');
 const missingPreflight = await providerPreflight.buildProviderPreflight({ AGENT_PROVIDER: 'gcp_cloud_run', CLOUD_RUN_DRY_RUN: 'true' }, { targets: ['example.com'], provider: 'gcp_cloud_run' });
