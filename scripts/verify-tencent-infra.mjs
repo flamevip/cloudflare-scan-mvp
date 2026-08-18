@@ -10,6 +10,7 @@ const bootstrap = [text('infra/tencent/bootstrap/main.tf'), text('infra/tencent/
 const ci = text('.github/workflows/ci.yml');
 const infraWorkflow = text('.github/workflows/tencent-infra.yml');
 const stagingAcceptanceWorkflow = text('.github/workflows/staging-mock-acceptance.yml');
+const stagingDryrunPreflightWorkflow = text('.github/workflows/staging-dryrun-preflight.yml');
 const stagingNegativeAcceptanceWorkflow = text('.github/workflows/staging-negative-acceptance.yml');
 const stagingRegistryDiagnosticWorkflow = text('.github/workflows/staging-registry-connectivity.yml');
 const stagingAcceptanceScript = text('scripts/run-staging-mock-acceptance.mjs');
@@ -77,6 +78,9 @@ for (const address of ['tencentcloud_tcr_repository.scan', 'tencentcloud_tcr_nam
 assert.match(infraWorkflow, /retention-days: 7/);
 assert.match(infraWorkflow, /inputs\.action == 'plan' \|\| inputs\.action == 'apply'/, 'state reconciliation must not run a plan before stale TCR addresses are forgotten');
 assert.match(stagingAcceptanceWorkflow, /environment: staging/);
+assert.match(stagingDryrunPreflightWorkflow, /timeout-minutes: 15/, 'staging dry-run preflight must allow the full cleanup convergence window');
+assert.match(stagingDryrunPreflightWorkflow, /ACCEPTANCE_CLEANUP_WAIT_MS: "600000"/, 'staging dry-run preflight must use the ten-minute cleanup convergence window');
+assert.doesNotMatch(stagingDryrunPreflightWorkflow, /ACCEPTANCE_CLEANUP_WAIT_MS: "120000"/, 'staging dry-run preflight must not retain the obsolete 120-second window');
 assert.match(stagingAcceptanceWorkflow, /concurrency:[\s\S]*group: staging-live-provider/);
 assert.match(stagingAcceptanceWorkflow, /STAGING_ADMIN_TOKEN: \$\{\{ secrets\.STAGING_ADMIN_TOKEN \}\}/);
 assert.match(stagingAcceptanceWorkflow, /TASK_MAX_RETRY = \\"1\\"','TASK_MAX_RETRY = \\"0\\"/);

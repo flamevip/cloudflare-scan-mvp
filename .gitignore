@@ -23,3 +23,4 @@ agent/real/sbom.spdx.json
 tfplan
 *.tfplan
 *.log
+work/
