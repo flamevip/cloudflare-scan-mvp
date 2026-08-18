@@ -70,6 +70,11 @@ async function buildReadOnlyCloudCheck(env: Env, input: ProviderPreflightInput, 
       ok: true,
       request_id: result.request_id,
       total_count: result.total_count,
+      instances: result.instances.slice(0, 100).map((instance) => ({
+        eks_ci_id: instance.EksCiId ?? null,
+        eks_ci_name: instance.EksCiName ?? null,
+        status: instance.Status ?? null,
+      })),
       checks: ['endpoint_reachable', 'tc3_signature_accepted', 'describe_permission_accepted'],
       limitations: ['create_permission_not_checked', 'image_pull_not_checked', 'subnet_capacity_not_checked', 'runtime_egress_not_checked'],
     };
