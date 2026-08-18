@@ -35,6 +35,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+      AGENT_TOKEN_SECRET: ${{ secrets.AGENT_TOKEN_SECRET }}
       TENCENT_EKS_CI_REGION: ${{ vars.TENCENT_EKS_CI_REGION }}
       TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
       TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
@@ -84,12 +86,31 @@ jobs:
       - name: Activate short-lived RBAC acceptance identities
         id: identities
         run: node scripts/manage-console-acceptance-identities.mjs create
+      - name: Create a no-cloud artifact acceptance fixture
+        id: artifact_fixture
+        run: node scripts/manage-console-acceptance-fixture.mjs create
       - name: Run authenticated cloud console acceptance
         id: console
         run: node scripts/run-console-cloud-acceptance.mjs
       - name: Verify Tencent EKS CI and EIP inventory is empty
         if: always()
         run: node scripts/inspect-tencent-resource-inventory.mjs
+      - name: Remove the artifact acceptance fixture
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          task_id="task_console_acceptance_${GITHUB_RUN_ID}"
+          prefix="tenants/default/tasks/${task_id}"
+          cleanup_failed=0
+          for key in "${prefix}/raw/console-acceptance.jsonl" "${prefix}/search/console-acceptance.md"; do
+            npx wrangler r2 object delete "${R2_BUCKET_NAME}/${key}" --remote --force || cleanup_failed=1
+          done
+          if [ "$cleanup_failed" -ne 0 ]; then
+            echo 'R2 fixture cleanup failed; retaining D1 metadata for recovery' >&2
+            exit 1
+          fi
+          node scripts/manage-console-acceptance-fixture.mjs revoke
       - name: Revoke RBAC acceptance identities
         if: always() && steps.identities.outcome == 'success'
         run: node scripts/manage-console-acceptance-identities.mjs revoke
