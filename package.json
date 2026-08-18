@@ -13,7 +13,7 @@
     "test:web:e2e": "node node_modules/playwright/cli.js test --config web/playwright.config.ts",
     "verify:p0": "node scripts/verify-p0.mjs",
     "verify:agent": "node scripts/verify-agent-fixtures.mjs",
-    "verify:p1": "node scripts/verify-p1-migrations.mjs && node scripts/verify-p1-auth.mjs && node scripts/verify-p1-search-config.mjs && node scripts/verify-p1-observability.mjs && node scripts/verify-p1-provider.mjs && node scripts/verify-p1-lifecycle.mjs && node scripts/verify-p1-retention.mjs && node scripts/verify-toolchain.mjs && node scripts/verify-wrangler-render.mjs && node scripts/verify-worker-deploy-fallback.mjs && node scripts/verify-tencent-infra.mjs",
+    "verify:p1": "node scripts/verify-p1-migrations.mjs && node scripts/verify-p1-auth.mjs && node scripts/verify-p1-search-config.mjs && node scripts/verify-p1-observability.mjs && node scripts/verify-p1-provider.mjs && node scripts/verify-p1-lifecycle.mjs && node scripts/verify-p1-retention.mjs && node scripts/verify-toolchain.mjs && node scripts/verify-wrangler-render.mjs && node scripts/verify-worker-deploy-fallback.mjs && node scripts/verify-tencent-infra.mjs && node scripts/verify-console-cloud-acceptance.mjs",
     "verify:p1:e2e": "node scripts/verify-p1-pilot-e2e.mjs",
     "verify:web": "npm run typecheck:web && npm run test:web && npm run build:web && node scripts/verify-web-syntax.mjs",
     "render:wrangler": "node scripts/render-wrangler-config.mjs",
