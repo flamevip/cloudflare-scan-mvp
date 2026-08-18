@@ -46,6 +46,34 @@ export interface TencentEksEipCleanupResult {
   request_id: string | null;
 }
 
+export interface TencentEksEipIdentity {
+  provider_eip_id: string | null;
+  provider_egress_ip: string | null;
+}
+
+/**
+ * Resolve an auto-created EIP while it is still associated with the EKS CI
+ * instance.  A task can be cancelled before the agent has sent a heartbeat,
+ * which means the TKE Describe response has not populated AutoCreatedEipId or
+ * EipAddress yet.  VPC DescribeAddresses still exposes the exact association
+ * and gives cleanup a safe identity to use.
+ */
+export async function discoverTencentEksAutoCreatedEip(env: Env, providerJobId: string): Promise<TencentEksEipIdentity> {
+  if (!/^eksci-[A-Za-z0-9-]+$/.test(providerJobId)) throw cleanupError('Tencent EKS CI provider job ID is invalid');
+  const result = await describeTencentAddresses(env, { instance_id: providerJobId });
+  if (!result.address) return { provider_eip_id: null, provider_egress_ip: null };
+  if (result.address.InstanceId && result.address.InstanceId !== providerJobId) {
+    throw cleanupError(`Tencent EIP is associated with another resource ${result.address.InstanceId}`);
+  }
+  if (result.address.AddressType && result.address.AddressType !== 'EIP') {
+    throw cleanupError(`refusing to use non-EIP Tencent address type=${result.address.AddressType}`);
+  }
+  return {
+    provider_eip_id: normalizeEipId(result.address.AddressId),
+    provider_egress_ip: result.address.AddressIp ? normalizePublicIpv4(result.address.AddressIp) : null,
+  };
+}
+
 export async function cleanupTencentEksAutoCreatedEip(env: Env, hint: TencentEksEipCleanupHint): Promise<TencentEksEipCleanupResult> {
   const addressId = normalizeEipId(hint.provider_eip_id);
   const addressIp = hint.provider_egress_ip ? normalizePublicIpv4(hint.provider_egress_ip) : null;
@@ -90,20 +118,24 @@ export async function cleanupTencentEksAutoCreatedEip(env: Env, hint: TencentEks
 
 export async function describeTencentAddresses(
   env: Env,
-  input: { address_id?: string | null; address_ip?: string | null },
+  input: { address_id?: string | null; address_ip?: string | null; instance_id?: string | null },
 ): Promise<{ request_id: string | null; total_count: number; address: TencentVpcAddress | null }> {
   const addressId = normalizeEipId(input.address_id);
   const addressIp = input.address_ip ? normalizePublicIpv4(input.address_ip) : null;
+  const instanceId = input.instance_id && /^eksci-[A-Za-z0-9-]+$/.test(input.instance_id) ? input.instance_id : null;
   const payload: Record<string, unknown> = { Limit: 2, Offset: 0 };
   if (addressId) payload.AddressIds = [addressId];
   else if (addressIp) payload.Filters = [{ Name: 'address-ip', Values: [addressIp] }];
-  else throw cleanupError('Tencent EIP lookup requires an exact address ID or public IPv4 address');
+  else if (instanceId) payload.Filters = [{ Name: 'instance-id', Values: [instanceId] }];
+  else throw cleanupError('Tencent EIP lookup requires an exact address ID, public IPv4 address, or EKS CI instance ID');
 
   const response = await callTencentVpcApi(env, 'DescribeAddresses', payload);
   const addresses = response.Response?.AddressSet ?? [];
   const exact = addressId
     ? addresses.filter((address) => address.AddressId === addressId)
-    : addresses.filter((address) => addressIp && normalizePublicIpv4(String(address.AddressIp ?? '')) === addressIp);
+    : addressIp
+      ? addresses.filter((address) => normalizePublicIpv4(String(address.AddressIp ?? '')) === addressIp)
+      : addresses.filter((address) => address.InstanceId === instanceId);
   if (exact.length > 1) throw cleanupError('Tencent EIP lookup returned more than one exact cleanup target');
   if (!exact.length && addresses.length) throw cleanupError('Tencent EIP lookup returned a non-matching cleanup target');
   if (exact[0] && addressIp && normalizePublicIpv4(String(exact[0].AddressIp ?? '')) !== addressIp) {
