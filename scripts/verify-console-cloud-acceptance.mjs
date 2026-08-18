@@ -32,6 +32,8 @@ assert.match(runner, /if \(environment === 'pilot'\)/);
 assert.match(runner, /target\.inputValue\(\), '70yun\.xyz'/);
 assert.match(runner, /rateLimit\.inputValue\(\), '1'/);
 assert.match(runner, /timeout\.inputValue\(\), '15'/);
+assert.match(runner, /getByLabel\(\/Hunter\/i\)\.count\(\), 0/);
+assert.match(runner, /projectScope = JSON\.parse\(projects\[0\]\.scope_json/);
 assert.match(runner, /pilot_policy_locked: true, task_submitted: false/);
 assert.match(runner, /environment === 'pilot'\) violations\.push\('pilot task submission was attempted'\)/);
 assert.match(runner, /request\.postDataJSON\(\)\?\.dry_run === false/);
